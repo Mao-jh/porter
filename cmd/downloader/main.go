@@ -9,7 +9,7 @@ import (
 	"os/signal"
 	"syscall"
 
-	"github.com/nymjin22/downloader/cli"
+	"github.com/Mao-jh/downloader/cli"
 )
 
 func main() {

@@ -1,4 +1,4 @@
-module github.com/nymjin22/downloader/gui
+module github.com/Mao-jh/downloader/gui
 
 go 1.26.2
 
@@ -73,4 +73,4 @@ require (
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
 
-replace github.com/nymjin22/downloader => ../
+replace github.com/Mao-jh/downloader => ../

@@ -10,13 +10,13 @@ import (
 	"testing"
 	"time"
 
-	"github.com/nymjin22/downloader/hash"
-	"github.com/nymjin22/downloader/io"
-	"github.com/nymjin22/downloader/network"
-	"github.com/nymjin22/downloader/persist"
-	"github.com/nymjin22/downloader/retry"
-	"github.com/nymjin22/downloader/scheduler"
-	"github.com/nymjin22/downloader/testserver"
+	"github.com/Mao-jh/downloader/hash"
+	"github.com/Mao-jh/downloader/io"
+	"github.com/Mao-jh/downloader/network"
+	"github.com/Mao-jh/downloader/persist"
+	"github.com/Mao-jh/downloader/retry"
+	"github.com/Mao-jh/downloader/scheduler"
+	"github.com/Mao-jh/downloader/testserver"
 )
 
 func init() { // 测试加速：最小退避

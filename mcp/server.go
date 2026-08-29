@@ -1,5 +1,6 @@
-// Package mcpserver 将下载器引擎暴露为 MCP（Model Context Protocol）服务器，
-// 使 AI 客户端（ZCode / Claude / Cursor 等）能够以工具调用方式驱动下载。
+// Package mcpserver Porter —— 下载器的 MCP（Model Context Protocol）插件，
+// 让 AI 客户端（ZCode / Claude / Cursor 等）以工具调用方式驱动下载：
+// AI 的专职搬运工。
 //
 // 设计要点（AI 第一用户）：
 //   - 工具集：download_start（异步启动）/ download_status（进度与状态）/
@@ -26,9 +27,9 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
-	"github.com/nymjin22/downloader/cli"
-	"github.com/nymjin22/downloader/hash"
-	"github.com/nymjin22/downloader/persist"
+	"github.com/Mao-jh/downloader/cli"
+	"github.com/Mao-jh/downloader/hash"
+	"github.com/Mao-jh/downloader/persist"
 )
 
 // Config MCP 下载服务配置。
@@ -280,7 +281,7 @@ func (d *Downloader) Status(taskID string) DownloadStatusOut {
 // NewToolServer 构造注册好全部工具的 MCP Server（测试与 main 共用）。
 func NewToolServer(cfg Config) *mcp.Server {
 	d := NewDownloader(cfg)
-	s := mcp.NewServer(&mcp.Implementation{Name: "downloader", Version: "1.0.0"}, nil)
+	s := mcp.NewServer(&mcp.Implementation{Name: "porter", Version: "1.0.0"}, nil)
 
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "download_start",

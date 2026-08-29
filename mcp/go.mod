@@ -1,13 +1,13 @@
-module github.com/nymjin22/downloader/mcp
+module github.com/Mao-jh/downloader/mcp
 
 go 1.26.2
 
 require (
+	github.com/Mao-jh/downloader v0.0.0-00010101000000-000000000000
 	github.com/modelcontextprotocol/go-sdk v1.7.0
-	github.com/nymjin22/downloader v0.0.0-00010101000000-000000000000
 )
 
-replace github.com/nymjin22/downloader => ../
+replace github.com/Mao-jh/downloader => ../
 
 require (
 	github.com/google/jsonschema-go v0.4.3 // indirect

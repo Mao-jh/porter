@@ -12,7 +12,7 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
-	mcpserver "github.com/nymjin22/downloader/mcp"
+	mcpserver "github.com/Mao-jh/downloader/mcp"
 )
 
 // newSession 组装内存传输上的 MCP 会话（server=被测工具集，client=模拟 AI 客户端）。

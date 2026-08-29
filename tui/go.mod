@@ -1,12 +1,12 @@
-module github.com/nymjin22/downloader/tui
+module github.com/Mao-jh/downloader/tui
 
 go 1.26.2
 
 require (
+	github.com/Mao-jh/downloader v0.0.0-00010101000000-000000000000
 	github.com/charmbracelet/bubbles v1.0.0
 	github.com/charmbracelet/bubbletea v1.3.10
 	github.com/charmbracelet/lipgloss v1.1.0
-	github.com/nymjin22/downloader v0.0.0-00010101000000-000000000000
 )
 
 require (
@@ -33,4 +33,4 @@ require (
 	golang.org/x/text v0.3.8 // indirect
 )
 
-replace github.com/nymjin22/downloader => ../
+replace github.com/Mao-jh/downloader => ../

@@ -3,7 +3,7 @@ package mcpserver_test
 import (
 	"testing"
 
-	"github.com/nymjin22/downloader/testserver"
+	"github.com/Mao-jh/downloader/testserver"
 )
 
 // tsHelper 测试服务端包装（确定性模式内容，可复算 sha256）。

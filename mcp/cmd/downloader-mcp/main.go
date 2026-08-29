@@ -1,4 +1,4 @@
-// Command downloader-mcp 将下载器暴露为 MCP 服务器（stdio 传输），
+// Command downloader-mcp 即 Porter —— 下载器的 MCP 服务器（stdio 传输），
 // 供 AI 客户端（ZCode / Claude Desktop / Cursor 等）作为插件接入。
 //
 // 客户端配置示例（mcp.json）：
@@ -22,7 +22,7 @@ import (
 	"fmt"
 	"os"
 
-	mcpserver "github.com/nymjin22/downloader/mcp"
+	mcpserver "github.com/Mao-jh/downloader/mcp"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )

@@ -8,9 +8,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/nymjin22/downloader/network"
-	"github.com/nymjin22/downloader/persist"
-	"github.com/nymjin22/downloader/scheduler"
+	"github.com/Mao-jh/downloader/network"
+	"github.com/Mao-jh/downloader/persist"
+	"github.com/Mao-jh/downloader/scheduler"
 )
 
 // memSink 内存 WriterAt（限速测试用）。

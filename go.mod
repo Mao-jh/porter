@@ -1,4 +1,4 @@
-module github.com/nymjin22/downloader
+module github.com/Mao-jh/downloader
 
 go 1.22
 

@@ -17,10 +17,10 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/nymjin22/downloader/cli"
-	"github.com/nymjin22/downloader/hash"
-	"github.com/nymjin22/downloader/scheduler"
-	"github.com/nymjin22/downloader/tui"
+	"github.com/Mao-jh/downloader/cli"
+	"github.com/Mao-jh/downloader/hash"
+	"github.com/Mao-jh/downloader/scheduler"
+	"github.com/Mao-jh/downloader/tui"
 
 	tea "github.com/charmbracelet/bubbletea"
 )

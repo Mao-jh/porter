@@ -21,8 +21,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/nymjin22/downloader/cli"
-	"github.com/nymjin22/downloader/persist"
+	"github.com/Mao-jh/downloader/cli"
+	"github.com/Mao-jh/downloader/persist"
 
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"

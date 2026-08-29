@@ -2,11 +2,14 @@
 
 # downloader
 
+> **Porter** —— 本仓库的 MCP 插件名：给 AI 配一个专职搬运工。
+> mcp.json 里 `"porter"` 即可把下载能力装进任何 AI 客户端。
+
 **多线程下载器 · CLI / TUI / MCP 三形态 · AI 第一用户**
 
 `go install` 即用 · 零第三方依赖核心 · 字节级断点续传 · MCP 插件化给 AI 客户端
 
-[![CI](https://github.com/nymjin22/downloader/actions/workflows/ci.yml/badge.svg)](https://github.com/nymjin22/downloader/actions/workflows/ci.yml)
+[![CI](https://github.com/Mao-jh/downloader/actions/workflows/ci.yml/badge.svg)](https://github.com/Mao-jh/downloader/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Go](https://img.shields.io/badge/Go-1.22%2B-00ADD8?logo=go)](go.mod)
 
@@ -38,21 +41,21 @@
 
 ```bash
 # 源码安装（需要 Go 1.22+）
-go install github.com/nymjin22/downloader/cmd/downloader@latest
-go install github.com/nymjin22/downloader/tui/cmd/downloader-tui@latest
-go install github.com/nymjin22/downloader/mcp/cmd/downloader-mcp@latest
+go install github.com/Mao-jh/downloader/cmd/downloader@latest
+go install github.com/Mao-jh/downloader/tui/cmd/downloader-tui@latest
+go install github.com/Mao-jh/downloader/mcp/cmd/downloader-mcp@latest
 ```
 
-或到 [Releases](https://github.com/nymjin22/downloader/releases) 下载预编译二进制
+或到 [Releases](https://github.com/Mao-jh/downloader/releases) 下载预编译二进制
 （Windows / Linux，静态、无动态依赖）。
 
-### 接入 AI 客户端（MCP）
+### 接入 AI 客户端（MCP · Porter）
 
 ```jsonc
 // ZCode / Claude Desktop / Cursor 的 mcp.json
 {
   "mcpServers": {
-    "downloader": {
+    "porter": {
       "command": "downloader-mcp",
       "args": ["-state-root", ".downloader-mcp"]
     }

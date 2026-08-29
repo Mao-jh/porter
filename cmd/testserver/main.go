@@ -15,7 +15,7 @@ import (
 	"path/filepath"
 	"syscall"
 
-	"github.com/nymjin22/downloader/testserver"
+	"github.com/Mao-jh/downloader/testserver"
 )
 
 func main() {
