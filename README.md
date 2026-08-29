@@ -1,15 +1,15 @@
 <div align="center">
 
-# downloader
+# Porter
 
-> **Porter** —— 本仓库的 MCP 插件名：给 AI 配一个专职搬运工。
-> mcp.json 里 `"porter"` 即可把下载能力装进任何 AI 客户端。
+**AI 的专职搬运工 —— 多线程下载器（CLI / TUI / MCP 三形态）**
 
-**多线程下载器 · CLI / TUI / MCP 三形态 · AI 第一用户**
+`porter` / `porter-tui` / `porter-mcp` 三个二进制共用一套零第三方依赖的核心引擎：
+把下载能力装进终端、装进脚本、装进任何 AI 客户端。
 
 `go install` 即用 · 零第三方依赖核心 · 字节级断点续传 · MCP 插件化给 AI 客户端
 
-[![CI](https://github.com/Mao-jh/downloader/actions/workflows/ci.yml/badge.svg)](https://github.com/Mao-jh/downloader/actions/workflows/ci.yml)
+[![CI](https://github.com/Mao-jh/porter/actions/workflows/ci.yml/badge.svg)](https://github.com/Mao-jh/porter/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Go](https://img.shields.io/badge/Go-1.22%2B-00ADD8?logo=go)](go.mod)
 
@@ -41,12 +41,12 @@
 
 ```bash
 # 源码安装（需要 Go 1.22+）
-go install github.com/Mao-jh/downloader/cmd/downloader@latest
-go install github.com/Mao-jh/downloader/tui/cmd/downloader-tui@latest
-go install github.com/Mao-jh/downloader/mcp/cmd/downloader-mcp@latest
+go install github.com/Mao-jh/porter/cmd/porter@latest
+go install github.com/Mao-jh/porter/tui/cmd/porter-tui@latest
+go install github.com/Mao-jh/porter/mcp/cmd/porter-mcp@latest
 ```
 
-或到 [Releases](https://github.com/Mao-jh/downloader/releases) 下载预编译二进制
+或到 [Releases](https://github.com/Mao-jh/porter/releases) 下载预编译二进制
 （Windows / Linux，静态、无动态依赖）。
 
 ### 接入 AI 客户端（MCP · Porter）
@@ -56,8 +56,8 @@ go install github.com/Mao-jh/downloader/mcp/cmd/downloader-mcp@latest
 {
   "mcpServers": {
     "porter": {
-      "command": "downloader-mcp",
-      "args": ["-state-root", ".downloader-mcp"]
+      "command": "porter-mcp",
+      "args": ["-state-root", ".porter-mcp"]
     }
   }
 }
@@ -70,20 +70,20 @@ go install github.com/Mao-jh/downloader/mcp/cmd/downloader-mcp@latest
 
 ### CLI
 ```bash
-downloader http://127.0.0.1:8080/file/big.bin            # 自动分片 + sha256 校验
-downloader url1 url2 -o outdir/ -limit 10485760          # 多任务 + 10MiB/s 全局限速
-downloader url -H "Cookie: session=abc" -n 16            # 透传头 + 16 分片
+porter http://127.0.0.1:8080/file/big.bin            # 自动分片 + sha256 校验
+porter url1 url2 -o outdir/ -limit 10485760          # 多任务 + 10MiB/s 全局限速
+porter url -H "Cookie: session=abc" -n 16            # 透传头 + 16 分片
 ```
 
 ### TUI
 ```bash
-downloader-tui                        # 交互界面：a 添加 / p 暂停·继续 / d 删除 / q 退出
-downloader-tui --selftest -url URL    # 无头自检（CI 用）
+porter-tui                        # 交互界面：a 添加 / p 暂停·继续 / d 删除 / q 退出
+porter-tui --selftest -url URL    # 无头自检（CI 用）
 ```
 
 ### MCP
 ```bash
-downloader-mcp -state-root .downloader-mcp    # stdio 传输，挂进任意 MCP 客户端
+porter-mcp -state-root .porter-mcp    # stdio 传输，挂进任意 MCP 客户端
 ```
 
 ## 🔒 安全边界（重要）
@@ -92,7 +92,7 @@ downloader-mcp -state-root .downloader-mcp    # stdio 传输，挂进任意 MCP 
 这是本项目的审计边界。下载公网资源需显式打开产品开关：
 
 ```bash
-downloader-mcp -allow-remote     # 或 CLI/TUI 的对应选项
+porter-mcp -allow-remote     # 或 CLI/TUI 的对应选项
 ```
 
 打开后即为常规下载器行为；默认关闭时，任何非回环目标在连接层被拒绝。
@@ -100,7 +100,7 @@ downloader-mcp -allow-remote     # 或 CLI/TUI 的对应选项
 ## 🏗 架构
 
 ```
-cmd/downloader      CLI 入口          ┐
+cmd/porter      CLI 入口          ┐
 tui/cmd/…           TUI 入口          ├─ 三形态共用核心引擎
 mcp/cmd/…           MCP Server 入口   ┘
 cli/                任务协调：范围队列 + 工作窃取 + 断点续传

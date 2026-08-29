@@ -8,7 +8,7 @@ rm -f deliverable.zip
 zip -q deliverable.zip \
     REPORT.md DESIGN.md TEST_REPORT.md BUILD.md USAGE.md \
     go.mod \
-    cmd/downloader/main.go \
+    cmd/porter/main.go \
     cli/cli.go cli/cli_test.go \
     network/transport.go network/transport_test.go \
     scheduler/shard.go scheduler/shard_test.go \

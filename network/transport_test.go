@@ -10,7 +10,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/Mao-jh/downloader/testserver"
+	"github.com/Mao-jh/porter/testserver"
 )
 
 // TestValidateURL_RejectsNonLoopback H-3：拒绝公网地址。

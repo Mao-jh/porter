@@ -3,8 +3,8 @@ package cli
 import (
 	"testing"
 
-	"github.com/Mao-jh/downloader/hash"
-	"github.com/Mao-jh/downloader/scheduler"
+	"github.com/Mao-jh/porter/hash"
+	"github.com/Mao-jh/porter/scheduler"
 )
 
 // TestParse_DefaultMode 默认模式 = ModeDefault(≤60%)。

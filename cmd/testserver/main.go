@@ -15,7 +15,7 @@ import (
 	"path/filepath"
 	"syscall"
 
-	"github.com/Mao-jh/downloader/testserver"
+	"github.com/Mao-jh/porter/testserver"
 )
 
 func main() {

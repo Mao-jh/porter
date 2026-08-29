@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Mao-jh/downloader/cli"
-	"github.com/Mao-jh/downloader/persist"
+	"github.com/Mao-jh/porter/cli"
+	"github.com/Mao-jh/porter/persist"
 
 	tea "github.com/charmbracelet/bubbletea"
 )

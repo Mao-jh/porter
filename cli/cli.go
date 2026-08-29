@@ -26,12 +26,12 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/Mao-jh/downloader/hash"
-	"github.com/Mao-jh/downloader/io"
-	"github.com/Mao-jh/downloader/network"
-	"github.com/Mao-jh/downloader/persist"
-	"github.com/Mao-jh/downloader/retry"
-	"github.com/Mao-jh/downloader/scheduler"
+	"github.com/Mao-jh/porter/hash"
+	"github.com/Mao-jh/porter/io"
+	"github.com/Mao-jh/porter/network"
+	"github.com/Mao-jh/porter/persist"
+	"github.com/Mao-jh/porter/retry"
+	"github.com/Mao-jh/porter/scheduler"
 )
 
 // Options 解析后的命令行选项。

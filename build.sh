@@ -1,7 +1,7 @@
 #!/bin/bash
 # 阶段1 构建脚本（BUILD.md）：Go 静态编译，零第三方依赖（B-1 / H-4）
 # 用法：./build.sh              # 阶段1：构建 Linux 二进制
-#        ./build.sh windows     # 阶段2：交叉编译 downloader.exe
+#        ./build.sh windows     # 阶段2：交叉编译 porter.exe
 set +e
 cd /data/workspace
 export PATH=$PATH:/usr/local/go/bin
@@ -28,17 +28,17 @@ echo "=== [B4] 静态编译 downloader ===" | tee -a build.log
 mkdir -p bin
 if [ "$TARGET" = "windows" ]; then
   export GOOS=windows GOARCH=amd64
-  go build -ldflags="-s -w" -o bin/downloader.exe ./cmd/downloader 2>&1 | tee -a build.log
+  go build -ldflags="-s -w" -o bin/porter.exe ./cmd/porter 2>&1 | tee -a build.log
 else
-  go build -ldflags="-s -w" -o bin/downloader ./cmd/downloader 2>&1 | tee -a build.log
+  go build -ldflags="-s -w" -o bin/downloader ./cmd/porter 2>&1 | tee -a build.log
 fi
 echo "build_exit=${PIPESTATUS[0]}" | tee -a build.log
 
 echo "=== [B5] 二进制信息 ===" | tee -a build.log
 if [ "$TARGET" = "windows" ]; then
-  ls -lh bin/downloader.exe 2>&1 | tee -a build.log
+  ls -lh bin/porter.exe 2>&1 | tee -a build.log
   echo "--- file 类型（若在 wine/兼容环境可用）---" | tee -a build.log
-  file bin/downloader.exe 2>&1 | tee -a build.log
+  file bin/porter.exe 2>&1 | tee -a build.log
 else
   file bin/downloader 2>&1 | tee -a build.log
   ls -lh bin/downloader 2>&1 | tee -a build.log

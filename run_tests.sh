@@ -30,16 +30,16 @@ CGO_ENABLED=1 go test -race -count=1 ./... 2>&1 | tee -a test_raw.log
 log "race_exit=$?"
 
 log "########## [T4] 产物构建 ##########"
-CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o bin/downloader.exe ./cmd/downloader 2>&1 | tee -a test_raw.log
+CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o bin/porter.exe ./cmd/porter 2>&1 | tee -a test_raw.log
 CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o bin/testserver.exe ./cmd/testserver 2>&1 | tee -a test_raw.log
-GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o bin/downloader_linux ./cmd/downloader 2>&1 | tee -a test_raw.log
+GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o bin/downloader_linux ./cmd/porter 2>&1 | tee -a test_raw.log
 ls -lh bin/ 2>&1 | tee -a test_raw.log
-file bin/downloader.exe bin/testserver.exe bin/downloader_linux 2>&1 | tee -a test_raw.log
+file bin/porter.exe bin/testserver.exe bin/downloader_linux 2>&1 | tee -a test_raw.log
 
 log "########## [T4b] TUI 模块（独立 module） ##########"
 (cd tui && CGO_ENABLED=0 go vet ./... 2>&1 | tee -a ../test_raw.log; log "tui_vet_exit=$?"
  CGO_ENABLED=1 go test -race -count=1 ./... 2>&1 | tee -a ../test_raw.log; log "tui_race_exit=$?"
- CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o downloader-tui.exe ./cmd/downloader-tui 2>&1 | tee -a ../test_raw.log
+ CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o porter-tui.exe ./cmd/porter-tui 2>&1 | tee -a ../test_raw.log
  log "tui_build_exit=$?")
 
 log "########## [T5] 端到端（进程级） ##########"

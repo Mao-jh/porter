@@ -6,7 +6,7 @@ import (
 	"net/http"
 	"testing"
 
-	"github.com/Mao-jh/downloader/hash"
+	"github.com/Mao-jh/porter/hash"
 )
 
 // TestServer_Range206 验证 Range 请求返回 206 与正确 Content-Range（§6）。

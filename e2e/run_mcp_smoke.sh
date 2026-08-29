@@ -12,7 +12,7 @@ TS_PID=$!
 sleep 1.5
 URL=$(grep '^url=' "$ROOT/e2e/mcp_ts.log" | cut -d= -f2- | sed 's|/file/.*||')/file/f.bin
 echo "url=$URL"
-python "$ROOT/scripts/mcp_smoke.py" "$ROOT/mcp/downloader-mcp.exe" "$URL" "$ROOT/e2e/mcpout"
+python "$ROOT/scripts/mcp_smoke.py" "$ROOT/mcp/porter-mcp.exe" "$URL" "$ROOT/e2e/mcpout"
 EC=$?
 kill $TS_PID 2>/dev/null || true
 exit $EC

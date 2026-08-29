@@ -30,13 +30,13 @@ jobs:
         run: |
           go vet ./...
           go test -race -count=1 ./...
-          go build -trimpath -ldflags="-s -w" -o downloader-tui.exe ./cmd/downloader-tui
+          go build -trimpath -ldflags="-s -w" -o porter-tui.exe ./cmd/porter-tui
       - name: MCP 模块（vet + race test + build）
         working-directory: mcp
         run: |
           go vet ./...
           go test -race -count=1 ./...
-          go build -trimpath -ldflags="-s -w" -o downloader-mcp.exe ./cmd/downloader-mcp
+          go build -trimpath -ldflags="-s -w" -o porter-mcp.exe ./cmd/porter-mcp
 
   release:
     if: startsWith(github.ref, 'refs/tags/v')
@@ -63,9 +63,9 @@ jobs:
         run: |
           mkdir -p dist
           # 各包在所属 module 目录内构建（mcp/tui 为独立 module）
-          go build -trimpath -ldflags="-s -w" -o "dist/downloader-${GOOS}-${GOARCH}${ext}" ./cmd/downloader
-          ( cd tui && go build -trimpath -ldflags="-s -w" -o "../dist/downloader-tui-${GOOS}-${GOARCH}${ext}" ./cmd/downloader-tui )
-          ( cd mcp && go build -trimpath -ldflags="-s -w" -o "../dist/downloader-mcp-${GOOS}-${GOARCH}${ext}" ./cmd/downloader-mcp )
+          go build -trimpath -ldflags="-s -w" -o "dist/porter-${GOOS}-${GOARCH}${ext}" ./cmd/porter
+          ( cd tui && go build -trimpath -ldflags="-s -w" -o "../dist/porter-tui-${GOOS}-${GOARCH}${ext}" ./cmd/porter-tui )
+          ( cd mcp && go build -trimpath -ldflags="-s -w" -o "../dist/porter-mcp-${GOOS}-${GOARCH}${ext}" ./cmd/porter-mcp )
         shell: bash
       - name: upload
         uses: softprops/action-gh-release@v2

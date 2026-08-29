@@ -25,7 +25,7 @@ print(h.hexdigest())")
 echo "src_sha256=$SRC_SHA  url=$URL"
 
 echo "=== [R1] 启动下载，1.5s 后强杀（预期约完成 20-30MiB） ==="
-"$BIN/downloader.exe" "$URL" -o "$OUT" -state-dir "$ST" &
+"$BIN/porter.exe" "$URL" -o "$OUT" -state-dir "$ST" &
 DL_PID=$!
 sleep 1.5
 kill -9 $DL_PID 2>/dev/null || taskkill //F //PID $DL_PID 2>/dev/null || true
@@ -45,7 +45,7 @@ print('shards=',[(s['start'],s['end'],s['done']) for s in v.get('shards',[])])
 "
 
 echo "=== [R2] 重启续传至完成 ==="
-"$BIN/downloader.exe" "$URL" -o "$OUT" -state-dir "$ST" -verify sha256
+"$BIN/porter.exe" "$URL" -o "$OUT" -state-dir "$ST" -verify sha256
 GOT=$(python -c "
 import hashlib
 h=hashlib.sha256()
@@ -56,7 +56,7 @@ echo "resumed_sha256=$GOT"
 if [ "$SRC_SHA" = "$GOT" ]; then echo "MATCH: 进程强杀后续传内容一致"; else echo "MISMATCH"; kill $TS_PID 2>/dev/null; exit 1; fi
 
 echo "=== [R3] 再次续传幂等：重复运行同参数（state=done → 全新重下成功） ==="
-"$BIN/downloader.exe" "$URL" -o "$OUT" -state-dir "$ST" >/dev/null 2>&1 && echo "re-run exit=0"
+"$BIN/porter.exe" "$URL" -o "$OUT" -state-dir "$ST" >/dev/null 2>&1 && echo "re-run exit=0"
 
 kill $TS_PID 2>/dev/null || true
 echo "=== RESUME E2E DONE ==="

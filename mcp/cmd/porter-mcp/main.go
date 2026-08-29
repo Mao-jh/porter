@@ -22,7 +22,7 @@ import (
 	"fmt"
 	"os"
 
-	mcpserver "github.com/Mao-jh/downloader/mcp"
+	mcpserver "github.com/Mao-jh/porter/mcp"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )

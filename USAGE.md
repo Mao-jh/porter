@@ -4,32 +4,32 @@
 ```bash
 # 构建（或直接使用 bin/ 下的产物）
 GOFLAGS=-mod=readonly GOPROXY=off CGO_ENABLED=0 \
-  go build -ldflags="-s -w" -o downloader ./cmd/downloader
+  go build -ldflags="-s -w" -o porter ./cmd/porter
 
 # 最简：下载 + 自动文件名 + 默认 sha256 校验
-./downloader http://127.0.0.1:8080/file/big.bin
+./porter http://127.0.0.1:8080/file/big.bin
 
 # 指定输出路径
-./downloader https://127.0.0.1/x.zip -o x.zip
+./porter https://127.0.0.1/x.zip -o x.zip
 
 # 多 URL 并发下载（-o 为输出目录；文件名自动取自 URL 并去重）
-./downloader http://127.0.0.1/a.bin http://127.0.0.1/b.bin -o outdir/
+./porter http://127.0.0.1/a.bin http://127.0.0.1/b.bin -o outdir/
 
 # 全局限速（字节/秒；所有任务、所有分片连接共享该配额）
-./downloader http://127.0.0.1/big.bin -limit 10485760     # 10 MiB/s
+./porter http://127.0.0.1/big.bin -limit 10485760     # 10 MiB/s
 
 # 透传请求头（可重复；Cookie / Authorization 等）
-./downloader http://127.0.0.1/x -H "Cookie: session=abc" -H "Authorization: Bearer t1"
+./porter http://127.0.0.1/x -H "Cookie: session=abc" -H "Authorization: Bearer t1"
 
 # 指定分片数（0=自动决策；显式上限 16，对齐 aria2 -x）
-./downloader http://127.0.0.1/x -n 16
+./porter http://127.0.0.1/x -n 16
 
 # CPU 模式（R-3）：多任务时同时决定并发任务数
-./downloader http://127.0.0.1/x -mode default   # ≤60% CPU（默认），多任务并发 ⌈cpus×0.6⌉
-./downloader http://127.0.0.1/x -mode max       # 满载；多任务并发 = cpus
+./porter http://127.0.0.1/x -mode default   # ≤60% CPU（默认），多任务并发 ⌈cpus×0.6⌉
+./porter http://127.0.0.1/x -mode max       # 满载；多任务并发 = cpus
 
 # 校验算法
-./downloader http://127.0.0.1/x -verify sha256   # sha256 | sha1 | md5 | none
+./porter http://127.0.0.1/x -verify sha256   # sha256 | sha1 | md5 | none
 ```
 
 ## 参数
@@ -56,7 +56,7 @@ go run ./cmd/testserver -dir ./e2edata -name big.bin -size 67108864 -limit 41943
 # stdout: file=... size=... url=http://127.0.0.1:PORT/file/big.bin
 
 # 终端 B：下载（自动分片并行 + 完成后 sha256 校验）
-./downloader http://127.0.0.1:PORT/file/big.bin -o big.bin -verify sha256
+./porter http://127.0.0.1:PORT/file/big.bin -o big.bin -verify sha256
 # stderr: [verify] big.bin(sha256)=<hex>
 ```
 

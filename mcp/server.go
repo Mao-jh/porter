@@ -27,9 +27,9 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
-	"github.com/Mao-jh/downloader/cli"
-	"github.com/Mao-jh/downloader/hash"
-	"github.com/Mao-jh/downloader/persist"
+	"github.com/Mao-jh/porter/cli"
+	"github.com/Mao-jh/porter/hash"
+	"github.com/Mao-jh/porter/persist"
 )
 
 // Config MCP 下载服务配置。

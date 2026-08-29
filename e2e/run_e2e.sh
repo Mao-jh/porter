@@ -28,8 +28,8 @@ with open(r'$DATA/big.bin','rb') as f:
 print(h.hexdigest())")
 echo "src_sha256=$SRC_SHA"
 
-echo "=== [E3] downloader.exe 全量下载（自动分片 + sha256 校验） ==="
-"$BIN/downloader.exe" "$URL" -o "$OUT" -state-dir "$ST" -verify sha256
+echo "=== [E3] porter.exe 全量下载（自动分片 + sha256 校验） ==="
+"$BIN/porter.exe" "$URL" -o "$OUT" -state-dir "$ST" -verify sha256
 echo "exit=$?"
 
 echo "=== [E4] 下载结果 sha256 比对 ==="
@@ -45,7 +45,7 @@ ls -la "$OUT"; [ ! -f "$OUT.part" ] && echo ".part 已清理"
 
 echo "=== [E5] 中断续传：启动 1.5s 后强杀进程，重启续传 ==="
 rm -f "$OUT" "$OUT.part"; rm -rf "$ST"
-"$BIN/downloader.exe" "$URL" -o "$OUT" -state-dir "$ST" &
+"$BIN/porter.exe" "$URL" -o "$OUT" -state-dir "$ST" &
 DL_PID=$!
 sleep 1.5
 kill -9 $DL_PID 2>/dev/null || taskkill //F //PID $DL_PID 2>/dev/null || true
@@ -62,7 +62,7 @@ print('shards=',[(s['start'],s['end'],s['done']) for s in v.get('shards',[])])
 " 2>/dev/null || echo "(state.json 读取失败)"
 
 echo "--- 重启续传 ---"
-"$BIN/downloader.exe" "$URL" -o "$OUT" -state-dir "$ST" -verify sha256
+"$BIN/porter.exe" "$URL" -o "$OUT" -state-dir "$ST" -verify sha256
 RESUME_SHA=$(python -c "
 import hashlib
 h=hashlib.sha256()
@@ -73,9 +73,9 @@ echo "resumed_sha256=$RESUME_SHA"
 [ "$SRC_SHA" = "$RESUME_SHA" ] && echo "MATCH: 续传后内容一致" || { echo "MISMATCH"; exit 1; }
 
 echo "=== [E6] CLI 参数/退出码冒烟 ==="
-"$BIN/downloader.exe" 2>&1; echo "no-args exit=$? (期望2)"
-"$BIN/downloader.exe" "$URL" -mode bogus 2>&1 | head -2; echo "---"
-"$BIN/downloader.exe" http://10.0.0.1/x 2>&1; echo "non-loopback exit=$? (期望1/2)"
+"$BIN/porter.exe" 2>&1; echo "no-args exit=$? (期望2)"
+"$BIN/porter.exe" "$URL" -mode bogus 2>&1 | head -2; echo "---"
+"$BIN/porter.exe" http://10.0.0.1/x 2>&1; echo "non-loopback exit=$? (期望1/2)"
 
 kill $TS_PID 2>/dev/null || taskkill //F //PID $TS_PID 2>/dev/null || true
 echo "=== E2E DONE ==="

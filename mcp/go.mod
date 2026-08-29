@@ -1,13 +1,13 @@
-module github.com/Mao-jh/downloader/mcp
+module github.com/Mao-jh/porter/mcp
 
 go 1.26.2
 
 require (
-	github.com/Mao-jh/downloader v0.0.0-00010101000000-000000000000
+	github.com/Mao-jh/porter v0.0.0-00010101000000-000000000000
 	github.com/modelcontextprotocol/go-sdk v1.7.0
 )
 
-replace github.com/Mao-jh/downloader => ../
+replace github.com/Mao-jh/porter => ../
 
 require (
 	github.com/google/jsonschema-go v0.4.3 // indirect

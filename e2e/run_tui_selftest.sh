@@ -23,7 +23,7 @@ URL="$BASE/file/f.bin"
 echo "url=$URL src_sha=$SRC_SHA"
 
 echo "=== [T1] selftest 全量下载（48MiB，服务端限速 2MiB/s/连接） ==="
-"$BIN/downloader-tui.exe" -selftest -url "$URL" -out outdir -state-dir tst1 -verify sha256
+"$BIN/porter-tui.exe" -selftest -url "$URL" -out outdir -state-dir tst1 -verify sha256
 [ -f outdir/f.bin ] && echo "输出文件存在: $(stat -c%s outdir/f.bin) 字节"
 OUT_SHA=$(python -c "
 import hashlib
@@ -35,7 +35,7 @@ print(h.hexdigest())")
 
 echo "=== [T2] 中断续传：限速下 1.5s 强杀 TUI 进程 → 重启 selftest 续传 ==="
 rm -rf tst2; mkdir -p outdir2
-"$BIN/downloader-tui.exe" -selftest -url "$URL" -out outdir2 -state-dir tst2 -verify sha256 &
+"$BIN/porter-tui.exe" -selftest -url "$URL" -out outdir2 -state-dir tst2 -verify sha256 &
 DPID=$!
 sleep 1.5
 kill -9 $DPID 2>/dev/null || taskkill //F //PID $DPID 2>/dev/null || true
@@ -52,7 +52,7 @@ for p in glob.glob('tst2/*/state.json'):
     st=json.load(open(p))
     for k,v in st.items():
         print('resume_state: done=',v['done'],'/',v['file_size'],'status=',v['status'])" 2>/dev/null || true
-"$BIN/downloader-tui.exe" -selftest -url "$URL" -out outdir2 -state-dir tst2 -verify sha256
+"$BIN/porter-tui.exe" -selftest -url "$URL" -out outdir2 -state-dir tst2 -verify sha256
 OUT2=$(python -c "
 import hashlib
 h=hashlib.sha256()

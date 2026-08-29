@@ -1,5 +1,5 @@
 // Command downloader 是下载工具的可执行入口（阶段1：Linux 二进制；阶段2：.exe）。
-// 构建：GOFLAGS=-mod=readonly GOPROXY=off CGO_ENABLED=0 go build -ldflags="-s -w" ./cmd/downloader
+// 构建：GOFLAGS=-mod=readonly GOPROXY=off CGO_ENABLED=0 go build -ldflags="-s -w" ./cmd/porter
 package main
 
 import (
@@ -9,7 +9,7 @@ import (
 	"os/signal"
 	"syscall"
 
-	"github.com/Mao-jh/downloader/cli"
+	"github.com/Mao-jh/porter/cli"
 )
 
 func main() {

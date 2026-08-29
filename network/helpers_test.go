@@ -3,7 +3,7 @@ package network
 import (
 	"testing"
 
-	"github.com/Mao-jh/downloader/testserver"
+	"github.com/Mao-jh/porter/testserver"
 )
 
 // loopbackServer 包装 testserver 供网络层测试使用（仅测试路径引用，生产不依赖）。
