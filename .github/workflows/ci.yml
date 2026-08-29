@@ -62,10 +62,10 @@ jobs:
           CGO_ENABLED: 0
         run: |
           mkdir -p dist
-          for app in cmd/downloader mcp/cmd/downloader-mcp; do
-            name=$(basename $app)
-            go build -trimpath -ldflags="-s -w" -o "dist/${name}-${GOOS}-${GOARCH}${ext}" ./${app}
-          done
+          # 各包在所属 module 目录内构建（mcp/tui 为独立 module）
+          go build -trimpath -ldflags="-s -w" -o "dist/downloader-${GOOS}-${GOARCH}${ext}" ./cmd/downloader
+          ( cd tui && go build -trimpath -ldflags="-s -w" -o "../dist/downloader-tui-${GOOS}-${GOARCH}${ext}" ./cmd/downloader-tui )
+          ( cd mcp && go build -trimpath -ldflags="-s -w" -o "../dist/downloader-mcp-${GOOS}-${GOARCH}${ext}" ./cmd/downloader-mcp )
         shell: bash
       - name: upload
         uses: softprops/action-gh-release@v2
