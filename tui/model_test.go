@@ -55,7 +55,13 @@ func TestAddTaskFlow(t *testing.T) {
 	if task.doneCh == nil || task.cancel == nil {
 		t.Fatal("Enter 后引擎应已启动（doneCh/cancel 就位）")
 	}
-	task.cancel() // 清理 goroutine
+	// 停引擎并等待其完全退出：否则 goroutine 异步创建 state 子目录会与 TempDir 清理竞态
+	task.cancel()
+	select {
+	case <-task.doneCh:
+	case <-time.After(10 * time.Second):
+		t.Fatal("引擎未在 10s 内退出")
+	}
 }
 
 // TestAddTaskRejectsNonHTTP 非 http(s) URL 拒绝且不崩溃。
@@ -137,7 +143,13 @@ func TestResumeAfterPause(t *testing.T) {
 	if m.tasks[0].doneCh == nil || m.tasks[0].cancel == nil {
 		t.Fatal("继续后引擎应已启动")
 	}
-	m.tasks[0].cancel() // 清理 goroutine
+	// 停引擎并等待其完全退出（避免 goroutine 与 TempDir 清理竞态）
+	m.tasks[0].cancel()
+	select {
+	case <-m.tasks[0].doneCh:
+	case <-time.After(10 * time.Second):
+		t.Fatal("引擎未在 10s 内退出")
+	}
 }
 
 // TestDeleteTask d 删除：移除行并清理 state 子目录。
