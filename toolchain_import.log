@@ -1,0 +1,18 @@
+=== [1] 扫描本地预置 Go 包 ===
+=== [2] 尝试 apt-get install golang-go (受限窗口) ===
+Reading package lists...
+Building dependency tree...
+Reading state information...
+E: Unable to locate package golang-go
+=== [3] apt 失败，尝试官方二进制 (go.dev) ===
+URL=https://go.dev/dl/go1.22.5.linux-amd64.tar.gz
+-rwxrwxrwx 1 root root 326 Aug 28 00:33 go.tar.gz
+
+gzip: stdin: not in gzip format
+tar: Child returned status 1
+tar: Error is not recoverable: exiting now
+install_go.sh: line 29: go: command not found
+=== [4] 导入后断网验证（断言失败） ===
+go.dev:403
+github:403
+（注：构建/测试全程 GOPROXY=off，禁止业务依赖联网）

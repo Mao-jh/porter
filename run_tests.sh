@@ -1,0 +1,58 @@
+#!/bin/bash
+# 测试执行脚本（第 4 轮）：门禁 + 产物 + 端到端，全部如实记录原始输出
+# 用法：./run_tests.sh          # 完整门禁
+#       ./run_tests.sh quick    # 仅 vet + 单测
+set +e
+cd "$(dirname "$0")"
+export GOFLAGS=-mod=readonly GOPROXY=off
+: > test_raw.log
+
+log() { echo "$@" | tee -a test_raw.log; }
+
+log "########## [T0] 环境 ##########"
+go version 2>&1 | tee -a test_raw.log
+
+log "########## [T1] go vet ##########"
+CGO_ENABLED=0 go vet ./... 2>&1 | tee -a test_raw.log
+log "vet_exit=$?"
+
+log "########## [T2] 单元测试（-count=1） ##########"
+CGO_ENABLED=0 go test -count=1 ./... 2>&1 | tee -a test_raw.log
+log "test_exit=$?"
+
+if [ "$1" = "quick" ]; then
+  log "########## quick 模式结束 ##########"
+  exit 0
+fi
+
+log "########## [T3] 竞态测试（-race，需 CGO=1） ##########"
+CGO_ENABLED=1 go test -race -count=1 ./... 2>&1 | tee -a test_raw.log
+log "race_exit=$?"
+
+log "########## [T4] 产物构建 ##########"
+CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o bin/downloader.exe ./cmd/downloader 2>&1 | tee -a test_raw.log
+CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o bin/testserver.exe ./cmd/testserver 2>&1 | tee -a test_raw.log
+GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o bin/downloader_linux ./cmd/downloader 2>&1 | tee -a test_raw.log
+ls -lh bin/ 2>&1 | tee -a test_raw.log
+file bin/downloader.exe bin/testserver.exe bin/downloader_linux 2>&1 | tee -a test_raw.log
+
+log "########## [T4b] TUI 模块（独立 module） ##########"
+(cd tui && CGO_ENABLED=0 go vet ./... 2>&1 | tee -a ../test_raw.log; log "tui_vet_exit=$?"
+ CGO_ENABLED=1 go test -race -count=1 ./... 2>&1 | tee -a ../test_raw.log; log "tui_race_exit=$?"
+ CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o downloader-tui.exe ./cmd/downloader-tui 2>&1 | tee -a ../test_raw.log
+ log "tui_build_exit=$?")
+
+log "########## [T5] 端到端（进程级） ##########"
+bash e2e/run_e2e.sh 2>&1 | tee -a test_raw.log
+log "e2e_exit=$?"
+bash e2e/run_resume.sh 2>&1 | tee -a test_raw.log
+log "resume_exit=$?"
+bash e2e/run_multi.sh 2>&1 | tee -a test_raw.log
+log "multi_exit=$?"
+bash e2e/run_tui_selftest.sh 2>&1 | tee -a test_raw.log
+log "tui_exit=$?"
+
+log "########## [T6] 依赖完整性 ##########"
+go list -m all 2>&1 | tee -a test_raw.log
+
+log "########## DONE（原始输出见 test_raw.log） ##########"

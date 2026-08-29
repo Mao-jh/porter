@@ -1,0 +1,46 @@
+[DATE] 2026-08-28T08:10:50Z
+[UNAME] Linux cubebox- 6.6.69-cube.bm.guest.005.x-g039db8913c80 #1 SMP PREEMPT_DYNAMIC Mon Jul  6 18:05:24 CST 2026 x86_64 x86_64 x86_64 GNU/Linux
+[ARCH] x86_64
+[OS_ID] ubuntu 22.04
+--- which tools ---
+[go] NOT FOUND
+[gccgo] NOT FOUND
+[gofmt] NOT FOUND
+[gcc] /usr/bin/gcc
+[g++] /usr/bin/g++
+[cc] /usr/bin/cc
+[make] /usr/bin/make
+[cmake] NOT FOUND
+[python3] /usr/bin/python3
+[pip3] /usr/bin/pip3
+[apt] /usr/bin/apt
+[apt-get] /usr/bin/apt-get
+[yum] NOT FOUND
+[dnf] NOT FOUND
+[apk] NOT FOUND
+[zypper] NOT FOUND
+[pacman] NOT FOUND
+[curl] /usr/bin/curl
+[wget] /usr/bin/wget
+[rsync] NOT FOUND
+[tar] /usr/bin/tar
+[unzip] /usr/bin/unzip
+--- /usr/local/go ---
+[/usr/local/go] NOT PRESENT
+--- snap / nix / conda hints ---
+matplotlib
+yb
+--- apt sources (offline candidate) ---
+[apt-cache] empty/unavailable
+--- pip index (python as fallback compiler host) ---
+pip 22.0.2 from /usr/lib/python3/dist-packages/pip (python 3.10)
+--- filesystem search for prebuilt go binary ---
+--- network reachability (best-effort, recorded) ---
+[https://8.8.8.8] 403
+[https://github.com] 403
+[https://go.dev] 403
+[https://golang.google.cn] 403
+[https://mirrors.aliyun.com] 403
+[https://studygolang.com] 403
+--- go install attempts (documentary, may fail) ---
+apt-get:E: Unable to locate package golang-go

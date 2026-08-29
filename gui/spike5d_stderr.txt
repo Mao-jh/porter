@@ -1,0 +1,2 @@
+2026/08/29 18:30:40 [WebView2] Environment created successfully
+[spike5] go_heap_inuse=2.1MB go_sys=7.1MB

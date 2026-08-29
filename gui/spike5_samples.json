@@ -1,0 +1,62 @@
+﻿{
+    "Summary":  {
+                    "ProcName":  "spike5",
+                    "Samples":  5,
+                    "WS_MinMB":  40.1,
+                    "WS_MaxMB":  40.1,
+                    "Private_MinMB":  55.7,
+                    "Private_MaxMB":  55.7,
+                    "IdleCPUPerCore_Max":  1.33
+                },
+    "Samples":  [
+                    {
+                        "Sample":  1,
+                        "Time":  "18:30:45",
+                        "WS_MB":  40.1,
+                        "Private_MB":  55.7,
+                        "CPUMs":  78,
+                        "Threads":  31,
+                        "Handles":  490
+                    },
+                    {
+                        "Sample":  2,
+                        "Time":  "18:30:47",
+                        "WS_MB":  40.1,
+                        "Private_MB":  55.7,
+                        "CPUMs":  78,
+                        "Threads":  31,
+                        "Handles":  490,
+                        "CPUPerCore":  0
+                    },
+                    {
+                        "Sample":  3,
+                        "Time":  "18:30:48",
+                        "WS_MB":  40.1,
+                        "Private_MB":  55.7,
+                        "CPUMs":  94,
+                        "Threads":  31,
+                        "Handles":  490,
+                        "CPUPerCore":  1.33
+                    },
+                    {
+                        "Sample":  4,
+                        "Time":  "18:30:49",
+                        "WS_MB":  40.1,
+                        "Private_MB":  55.7,
+                        "CPUMs":  94,
+                        "Threads":  31,
+                        "Handles":  490,
+                        "CPUPerCore":  0
+                    },
+                    {
+                        "Sample":  5,
+                        "Time":  "18:30:50",
+                        "WS_MB":  40.1,
+                        "Private_MB":  55.7,
+                        "CPUMs":  94,
+                        "Threads":  31,
+                        "Handles":  490,
+                        "CPUPerCore":  0
+                    }
+                ]
+}

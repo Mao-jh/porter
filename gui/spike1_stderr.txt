@@ -1,0 +1,1 @@
+[spike1] go_heap_inuse=18.3MB go_sys=30.9MB exit=<nil>

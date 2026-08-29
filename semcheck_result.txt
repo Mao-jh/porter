@@ -1,0 +1,250 @@
+{
+  "files": 19,
+  "packages": {
+    "cli": 2,
+    "main": 1,
+    "hash": 2,
+    "io": 4,
+    "network": 2,
+    "persist": 2,
+    "retry": 2,
+    "scheduler": 2,
+    "testserver": 2
+  },
+  "issues": [
+    {
+      "file": "./cli/cli.go",
+      "severity": "ERROR",
+      "msg": "unmatched closing ')'"
+    },
+    {
+      "file": "./cli/cli.go",
+      "severity": "ERROR",
+      "msg": "duplicate top-level name 'offsetWriterAt' (2x)"
+    },
+    {
+      "file": "./cli/cli_test.go",
+      "severity": "ERROR",
+      "msg": "unclosed: {"
+    },
+    {
+      "file": "./cmd/downloader/main.go",
+      "severity": "ERROR",
+      "msg": "mismatched: opened '(' closed '}'"
+    },
+    {
+      "file": "./hash/hash.go",
+      "severity": "ERROR",
+      "msg": "mismatched: opened '(' closed '}'"
+    },
+    {
+      "file": "./hash/hash.go",
+      "severity": "ERROR",
+      "msg": "duplicate top-level name 'Algorithm' (4x)"
+    },
+    {
+      "file": "./hash/hash_test.go",
+      "severity": "ERROR",
+      "msg": "mismatched: opened '(' closed '}'"
+    },
+    {
+      "file": "./io/buffer.go",
+      "severity": "ERROR",
+      "msg": "mismatched: opened '{' closed ')'"
+    },
+    {
+      "file": "./io/buffer.go",
+      "severity": "ERROR",
+      "msg": "duplicate top-level name 'RingBuffer' (4x)"
+    },
+    {
+      "file": "./io/buffer.go",
+      "severity": "ERROR",
+      "msg": "duplicate top-level name 'r' (3x)"
+    },
+    {
+      "file": "./io/buffer.go",
+      "severity": "ERROR",
+      "msg": "duplicate top-level name 'SparseFile' (5x)"
+    },
+    {
+      "file": "./io/buffer.go",
+      "severity": "ERROR",
+      "msg": "duplicate top-level name 'sf' (4x)"
+    },
+    {
+      "file": "./io/buffer_test.go",
+      "severity": "ERROR",
+      "msg": "mismatched: opened '(' closed '}'"
+    },
+    {
+      "file": "./io/fallocate_linux.go",
+      "severity": "ERROR",
+      "msg": "mismatched: opened '(' closed '}'"
+    },
+    {
+      "file": "./network/transport.go",
+      "severity": "ERROR",
+      "msg": "mismatched: opened '(' closed '}'"
+    },
+    {
+      "file": "./network/transport.go",
+      "severity": "ERROR",
+      "msg": "duplicate top-level name 'Transport' (3x)"
+    },
+    {
+      "file": "./network/transport.go",
+      "severity": "ERROR",
+      "msg": "duplicate top-level name 't' (2x)"
+    },
+    {
+      "file": "./network/transport.go",
+      "severity": "ERROR",
+      "msg": "duplicate top-level name 'httpError' (3x)"
+    },
+    {
+      "file": "./network/transport.go",
+      "severity": "ERROR",
+      "msg": "duplicate top-level name 'e' (2x)"
+    },
+    {
+      "file": "./network/transport_test.go",
+      "severity": "ERROR",
+      "msg": "mismatched: opened '(' closed '}'"
+    },
+    {
+      "file": "./persist/persist.go",
+      "severity": "ERROR",
+      "msg": "mismatched: opened '[' closed '}'"
+    },
+    {
+      "file": "./persist/persist.go",
+      "severity": "ERROR",
+      "msg": "duplicate top-level name 'Store' (8x)"
+    },
+    {
+      "file": "./persist/persist.go",
+      "severity": "ERROR",
+      "msg": "duplicate top-level name 's' (7x)"
+    },
+    {
+      "file": "./persist/persist_test.go",
+      "severity": "ERROR",
+      "msg": "mismatched: opened '(' closed '}'"
+    },
+    {
+      "file": "./retry/retry.go",
+      "severity": "ERROR",
+      "msg": "mismatched: opened '(' closed '}'"
+    },
+    {
+      "file": "./retry/retry.go",
+      "severity": "ERROR",
+      "msg": "duplicate top-level name 'Config' (3x)"
+    },
+    {
+      "file": "./retry/retry.go",
+      "severity": "ERROR",
+      "msg": "duplicate top-level name 'c' (2x)"
+    },
+    {
+      "file": "./retry/retry_test.go",
+      "severity": "ERROR",
+      "msg": "unclosed: ("
+    },
+    {
+      "file": "./retry/retry_test.go",
+      "severity": "ERROR",
+      "msg": "duplicate top-level name 'i' (2x)"
+    },
+    {
+      "file": "./retry/retry_test.go",
+      "severity": "ERROR",
+      "msg": "duplicate top-level name 'int' (2x)"
+    },
+    {
+      "file": "./scheduler/shard.go",
+      "severity": "ERROR",
+      "msg": "mismatched: opened '{' closed ')'"
+    },
+    {
+      "file": "./scheduler/shard.go",
+      "severity": "ERROR",
+      "msg": "duplicate top-level name 'Plan' (6x)"
+    },
+    {
+      "file": "./scheduler/shard.go",
+      "severity": "ERROR",
+      "msg": "duplicate top-level name 'p' (5x)"
+    },
+    {
+      "file": "./scheduler/shard.go",
+      "severity": "ERROR",
+      "msg": "duplicate top-level name 'Status' (2x)"
+    },
+    {
+      "file": "./scheduler/shard.go",
+      "severity": "ERROR",
+      "msg": "duplicate top-level name 'iota' (3x)"
+    },
+    {
+      "file": "./scheduler/shard.go",
+      "severity": "ERROR",
+      "msg": "duplicate top-level name 'PriorityQueue' (6x)"
+    },
+    {
+      "file": "./scheduler/shard.go",
+      "severity": "ERROR",
+      "msg": "duplicate top-level name 'pq' (5x)"
+    },
+    {
+      "file": "./scheduler/shard.go",
+      "severity": "ERROR",
+      "msg": "duplicate top-level name 'Scheduler' (5x)"
+    },
+    {
+      "file": "./scheduler/shard.go",
+      "severity": "ERROR",
+      "msg": "duplicate top-level name 'Mode' (3x)"
+    },
+    {
+      "file": "./scheduler/shard.go",
+      "severity": "ERROR",
+      "msg": "duplicate top-level name 's' (4x)"
+    },
+    {
+      "file": "./scheduler/shard_test.go",
+      "severity": "ERROR",
+      "msg": "mismatched: opened '(' closed '}'"
+    },
+    {
+      "file": "./scheduler/shard_test.go",
+      "severity": "ERROR",
+      "msg": "duplicate top-level name 'covered' (2x)"
+    },
+    {
+      "file": "./testserver/server.go",
+      "severity": "ERROR",
+      "msg": "unmatched closing ')'"
+    },
+    {
+      "file": "./testserver/server.go",
+      "severity": "ERROR",
+      "msg": "duplicate top-level name 'Server' (9x)"
+    },
+    {
+      "file": "./testserver/server.go",
+      "severity": "ERROR",
+      "msg": "duplicate top-level name 's' (8x)"
+    },
+    {
+      "file": "./testserver/server_test.go",
+      "severity": "ERROR",
+      "msg": "mismatched: opened '(' closed '}'"
+    }
+  ],
+  "errors": 46
+}
+---
+files=19 errors=46
+NOTE: go_semcheck.py is a structural checker only; it does NOT replace `go build`/`go vet`.

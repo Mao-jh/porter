@@ -1,0 +1,1 @@
+[spike6] go_heap_inuse=2.1MB go_sys=6.8MB

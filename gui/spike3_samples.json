@@ -1,0 +1,62 @@
+﻿{
+    "Summary":  {
+                    "ProcName":  "spike3",
+                    "Samples":  5,
+                    "WS_MinMB":  32.4,
+                    "WS_MaxMB":  32.4,
+                    "Private_MinMB":  21.5,
+                    "Private_MaxMB":  21.5,
+                    "IdleCPUPerCore_Max":  0
+                },
+    "Samples":  [
+                    {
+                        "Sample":  1,
+                        "Time":  "17:56:34",
+                        "WS_MB":  32.4,
+                        "Private_MB":  21.5,
+                        "CPUMs":  109,
+                        "Threads":  22,
+                        "Handles":  377
+                    },
+                    {
+                        "Sample":  2,
+                        "Time":  "17:56:35",
+                        "WS_MB":  32.4,
+                        "Private_MB":  21.5,
+                        "CPUMs":  109,
+                        "Threads":  22,
+                        "Handles":  377,
+                        "CPUPerCore":  0
+                    },
+                    {
+                        "Sample":  3,
+                        "Time":  "17:56:36",
+                        "WS_MB":  32.4,
+                        "Private_MB":  21.5,
+                        "CPUMs":  109,
+                        "Threads":  22,
+                        "Handles":  377,
+                        "CPUPerCore":  0
+                    },
+                    {
+                        "Sample":  4,
+                        "Time":  "17:56:37",
+                        "WS_MB":  32.4,
+                        "Private_MB":  21.5,
+                        "CPUMs":  109,
+                        "Threads":  22,
+                        "Handles":  377,
+                        "CPUPerCore":  0
+                    },
+                    {
+                        "Sample":  5,
+                        "Time":  "17:56:39",
+                        "WS_MB":  32.4,
+                        "Private_MB":  21.5,
+                        "CPUMs":  109,
+                        "Threads":  22,
+                        "Handles":  377,
+                        "CPUPerCore":  0
+                    }
+                ]
+}

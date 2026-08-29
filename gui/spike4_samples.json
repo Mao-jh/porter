@@ -1,0 +1,82 @@
+﻿{
+    "Summary":  {
+                    "ProcName":  "spike4",
+                    "Samples":  7,
+                    "WS_MinMB":  161.1,
+                    "WS_MaxMB":  161.1,
+                    "Private_MinMB":  162.9,
+                    "Private_MaxMB":  163,
+                    "IdleCPUPerCore_Max":  0
+                },
+    "Samples":  [
+                    {
+                        "Sample":  1,
+                        "Time":  "18:21:32",
+                        "WS_MB":  161.1,
+                        "Private_MB":  163,
+                        "CPUMs":  719,
+                        "Threads":  31,
+                        "Handles":  516
+                    },
+                    {
+                        "Sample":  2,
+                        "Time":  "18:21:34",
+                        "WS_MB":  161.1,
+                        "Private_MB":  163,
+                        "CPUMs":  719,
+                        "Threads":  31,
+                        "Handles":  516,
+                        "CPUPerCore":  0
+                    },
+                    {
+                        "Sample":  3,
+                        "Time":  "18:21:35",
+                        "WS_MB":  161.1,
+                        "Private_MB":  163,
+                        "CPUMs":  719,
+                        "Threads":  31,
+                        "Handles":  516,
+                        "CPUPerCore":  0
+                    },
+                    {
+                        "Sample":  4,
+                        "Time":  "18:21:36",
+                        "WS_MB":  161.1,
+                        "Private_MB":  162.9,
+                        "CPUMs":  719,
+                        "Threads":  31,
+                        "Handles":  516,
+                        "CPUPerCore":  0
+                    },
+                    {
+                        "Sample":  5,
+                        "Time":  "18:21:37",
+                        "WS_MB":  161.1,
+                        "Private_MB":  162.9,
+                        "CPUMs":  719,
+                        "Threads":  31,
+                        "Handles":  516,
+                        "CPUPerCore":  0
+                    },
+                    {
+                        "Sample":  6,
+                        "Time":  "18:21:38",
+                        "WS_MB":  161.1,
+                        "Private_MB":  162.9,
+                        "CPUMs":  719,
+                        "Threads":  31,
+                        "Handles":  516,
+                        "CPUPerCore":  0
+                    },
+                    {
+                        "Sample":  7,
+                        "Time":  "18:21:40",
+                        "WS_MB":  161.1,
+                        "Private_MB":  162.9,
+                        "CPUMs":  719,
+                        "Threads":  31,
+                        "Handles":  516,
+                        "CPUPerCore":  0
+                    }
+                ]
+}

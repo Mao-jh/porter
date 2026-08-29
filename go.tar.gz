@@ -1,0 +1,1 @@
+{"title":"Request denied","status":403,"detail":"No policy rule matched the request","request_id":"2cbf5c79-c4a5-462a-918e-b33d4520c16a","reason":"policy_default_denied","source":{"type":"policy","policy_name":"main-policy"},"request":{"method":"GET","scheme":"https","host":"go.dev","path":"/dl/go1.22.5.linux-amd64.tar.gz"}}

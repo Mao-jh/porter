@@ -1,0 +1,25 @@
+=== [B1] 环境断言 ===
+Linux cubebox- 6.6.69-cube.bm.guest.005.x-g039db8913c80 #1 SMP PREEMPT_DYNAMIC Mon Jul  6 18:05:24 CST 2026 x86_64 x86_64 x86_64 GNU/Linux
+3
+=== [B2] 源码静态分析（cppcheck，若可用）===
+=== [B3] 编译 downloader (静态, -O2) ===
+--- 链接依赖 (应仅 libc/libstdc++/libpthread, 无第三方) ---
+	linux-vdso.so.1 (0x00007ffcae963000)
+	libstdc++.so.6 => /lib/x86_64-linux-gnu/libstdc++.so.6 (0x00007fd61923b000)
+	libgcc_s.so.1 => /lib/x86_64-linux-gnu/libgcc_s.so.1 (0x00007fd61921b000)
+	libc.so.6 => /lib/x86_64-linux-gnu/libc.so.6 (0x00007fd618ff2000)
+	libm.so.6 => /lib/x86_64-linux-gnu/libm.so.6 (0x00007fd618f0b000)
+	/lib64/ld-linux-x86-64.so.2 (0x00007fd619480000)
+=== [B4] 编译 testserver (独立 TU, 自带 main) ===
+=== [B5] 生成测试数据 (10MiB / 128MiB) ===
+=== [B6] 全量自测 (S-2/S-3/S-4/S-5) ===
+
+=== S-2 分片边界断言 ===
+  size=         0 MiB -> 1 shards OK
+  size=         0 MiB -> 1 shards OK
+  size=         3 MiB -> 1 shards OK
+  size=        10 MiB -> 3 shards OK
+  size=       128 MiB -> 3 shards OK
+  size=      2048 MiB -> 3 shards OK
+
+=== S-4 故障注入重试 (各≥3次) ===

@@ -1,0 +1,8 @@
+2026/08/29 18:21:41 *** This application has not been migrated to the fyne.Do threading model ***
+2026/08/29 18:21:41 *** The next major Fyne release will remove this safety! ***
+2026/08/29 18:21:41 *** Read more at https://docs.fyne.io/started/goroutines ***
+2026/08/29 18:21:41 *** Error in Fyne call thread, this should have been called in fyne.Do[AndWait] ***
+2026/08/29 18:21:41 *** This error needs to be addressed as it could cause concurrent errors soon ***
+2026/08/29 18:21:41 *** The next major Fyne release will disable this safety by default! ***
+2026/08/29 18:21:41   From: downloader/gui/spike/spike4/main.go:36
+[spike4] go_heap_inuse=53.9MB go_sys=68.6MB
