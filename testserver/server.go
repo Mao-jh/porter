@@ -64,6 +64,8 @@ func New(cfg Config) (*Server, error) {
 	mux.HandleFunc("/file/", s.handleFile)
 	mux.HandleFunc("/fault", s.handleFault)
 	mux.HandleFunc("/echo", s.handleEcho)
+	mux.HandleFunc("/redirect", s.handleRedirect)
+	s.registerProtocolRoutes(mux) // HLS/Metalink 端点（第 13 轮）
 	s.mux = mux
 	s.srv = &http.Server{Handler: mux, ReadHeaderTimeout: 5 * time.Second}
 
@@ -282,9 +284,22 @@ func (s *Server) handleFault(w http.ResponseWriter, r *http.Request) {
 		panic(http.ErrAbortHandler)
 	case "429":
 		http.Error(w, "too many", http.StatusTooManyRequests)
+	case "429ra": // 429 + Retry-After（重试退避合规测试用）
+		w.Header().Set("Retry-After", "1")
+		http.Error(w, "too many (retry-after)", http.StatusTooManyRequests)
 	case "5xx":
 		http.Error(w, "boom", http.StatusInternalServerError)
 	default:
 		io.WriteString(w, "ok")
 	}
+}
+
+// handleRedirect 302 到 ?to= 指定的目标（重定向策略测试用：跳数/协议白名单/跨主机凭据剥离）。
+func (s *Server) handleRedirect(w http.ResponseWriter, r *http.Request) {
+	to := r.URL.Query().Get("to")
+	if to == "" {
+		http.Error(w, "missing to", http.StatusBadRequest)
+		return
+	}
+	http.Redirect(w, r, to, http.StatusFound)
 }

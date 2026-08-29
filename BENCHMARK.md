@@ -48,7 +48,7 @@
 | 3 | 无客户端限速 | 全部同类 | ✅ `-limit` 全局限速（平滑令牌配额，跨任务跨分片共享；80MiB@12MiB/s 实测 7s ≥ 理论 6.7s） |
 | 4 | 无代理/Cookie/Header/认证 | aria2 最全 | ◐ `-H` 透传头已实现（Cookie/Authorization 可用）；代理需决策（与 H-3 交互） |
 | 5 | 多任务队列未接线到 CLI | aria2 `-j`、IDM 4 任务 | ✅ 多 URL 队列已接线：并发任务数由 R-3 模式决定（default ⌈cpus×0.6⌉ / max cpus） |
-| 6 | 协议面窄（无 FTP/BT/磁力） | aria2 六协议 | ⛔ 差异化取舍（标准库无 BT），非缺陷；诚实标注 |
+| 6 | 协议面窄（无 SFTP/BT/磁力） | aria2 六协议 | ◐ **第 13 轮扩展 FTP(S)/HLS/Metalink4/file**（HLS 为主列表选流+AES-128，复用分片引擎；Metalink 含候选 failover+哈希期望值校验）。SFTP 需 x/crypto、BT 需完整协议栈——零依赖（B-1/H-4）约束下的诚实取舍 |
 | 7 | 无浏览器集成/GUI | IDM/FDM/AB | ✅ **TUI 已实现**（Bubble Tea，`tui/` module + `downloader-tui.exe`；AI 第一用户准则下实测 Private 13.3MB 为全候选最优）。GUI 仍无（选型证据 [gui/SPIKE_LOG.md](gui/SPIKE_LOG.md)） |
 | 8 | HTTP/2 已随 net/http 自动启用但未调优、HTTP/3 未支持 | — | ⛔ 长尾优化项 |
 

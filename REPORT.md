@@ -33,7 +33,7 @@
 | 分段 | 动态文件分段、连接复用（宣称至 5x） | chunked：`split=5` 默认、`min-split-size=20M` 才再分 | 计划期分片 + 运行时尾段窃取（IDM 同类思想，机制独立实现） |
 | 连接上限 | 32 | 每服务器 1（`-x` 至 16 硬上限） | 6（刻意保守，配合 H-1/H-2） |
 | 续传 | ✅ | `--continue`（HTTP/FTP） | ✅ 字节级（500ms 持久化，强杀 56% 续传实测通过） |
-| 协议 | HTTP/FTP | HTTP(S)/FTP/SFTP/BT/Metalink | HTTP/HTTPS，**仅回环**（H-3 交付约束） |
+| 协议 | HTTP/FTP | HTTP(S)/FTP/SFTP/BT/Metalink | HTTP(S)/FTP(S)/HLS/Metalink4/file，**仅回环**（H-3 交付约束） |
 | 授权 | 共享软件（30 天试用） | 开源 (GPLv2) | 交付物（零第三方依赖静态二进制） |
 
 ### 2.2 「超越」声明的有效边界（R-2，联网实证后依旧成立）

@@ -179,6 +179,7 @@ func TestMCP_CancelLifecycle(t *testing.T) {
 }
 
 // TestMCP_RejectsBadInput 非法输入走 isError 文本结果（AI 可读），不崩服务。
+// 第 12 轮起 ftp/ftps 已入白名单（引擎 Mux 分发），此处以未知协议验证拒绝路径。
 func TestMCP_RejectsBadInput(t *testing.T) {
 	cfg := mcpserver.Config{StateRoot: filepath.Join(t.TempDir(), "state")}
 	cs := newSession(t, cfg)
@@ -186,12 +187,12 @@ func TestMCP_RejectsBadInput(t *testing.T) {
 	defer cancel()
 	res, err := cs.CallTool(ctx, &mcp.CallToolParams{
 		Name:      "download_start",
-		Arguments: map[string]any{"url": "ftp://127.0.0.1/x"},
+		Arguments: map[string]any{"url": "gopher://127.0.0.1/x"},
 	})
 	if err != nil {
 		t.Fatalf("调用本身不应失败: %v", err)
 	}
 	if !res.IsError {
-		t.Fatal("ftp URL 应返回 isError 结果")
+		t.Fatal("gopher URL 应返回 isError 结果")
 	}
 }

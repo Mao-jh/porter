@@ -6,6 +6,9 @@ on:
     tags: ['v*']
   pull_request:
 
+permissions:
+  contents: read # 供应链最小权限；release 任务按需声明 contents: write
+
 jobs:
   test:
     strategy:
@@ -25,6 +28,8 @@ jobs:
           go test -count=1 ./...
           echo "go list -m all（应仅含本模块）:"
           go list -m all
+      - name: 合规检查（scripts/compliance.sh）
+        run: bash scripts/compliance.sh
       - name: TUI 模块（vet + race test + build）
         working-directory: tui
         run: |
@@ -37,6 +42,25 @@ jobs:
           go vet ./...
           go test -race -count=1 ./...
           go build -trimpath -ldflags="-s -w" -o porter-mcp.exe ./cmd/porter-mcp
+
+  vulncheck:
+    # 供应链合规：官方漏洞库比对（标准库 + tui/mcp 第三方依赖）
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: 'stable'
+      - name: 安装 govulncheck
+        run: go install golang.org/x/vuln/cmd/govulncheck@latest
+      - name: 核心模块
+        run: govulncheck ./...
+      - name: TUI 模块
+        working-directory: tui
+        run: govulncheck ./...
+      - name: MCP 模块
+        working-directory: mcp
+        run: govulncheck ./...
 
   release:
     if: startsWith(github.ref, 'refs/tags/v')

@@ -35,12 +35,13 @@ type Store struct {
 	data map[string]*State
 }
 
-// Open 打开/创建持久化目录。
+// Open 打开/创建持久化目录。目录权限 0700（合规：state.json 含完整 URL，
+// 可能携带 query 中的 token 等敏感信息，仅限属主可读）。
 func Open(dir string) (*Store, error) {
 	if dir == "" {
 		return nil, errors.New("persist: empty dir")
 	}
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return nil, err
 	}
 	s := &Store{dir: dir, data: make(map[string]*State)}
@@ -91,10 +92,10 @@ func (s *Store) Remove(id string) error {
 
 func (s *Store) path() string { return filepath.Join(s.dir, "state.json") }
 
-// flushLocked 将内存快照原子写入磁盘。
+// flushLocked 将内存快照原子写入磁盘（0600：状态文件含 URL 凭据，仅属主可读）。
 func (s *Store) flushLocked() error {
 	tmp := s.path() + ".tmp"
-	f, err := os.Create(tmp)
+	f, err := os.OpenFile(tmp, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o600)
 	if err != nil {
 		return err
 	}

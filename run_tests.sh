@@ -49,10 +49,18 @@ bash e2e/run_resume.sh 2>&1 | tee -a test_raw.log
 log "resume_exit=$?"
 bash e2e/run_multi.sh 2>&1 | tee -a test_raw.log
 log "multi_exit=$?"
+bash e2e/run_ftp.sh 2>&1 | tee -a test_raw.log
+log "ftp_exit=$?"
+bash e2e/run_protocol.sh 2>&1 | tee -a test_raw.log
+log "protocol_exit=$?"
 bash e2e/run_tui_selftest.sh 2>&1 | tee -a test_raw.log
 log "tui_exit=$?"
 
 log "########## [T6] 依赖完整性 ##########"
 go list -m all 2>&1 | tee -a test_raw.log
+
+log "########## [T7] 开源合规检查（第 13 轮） ##########"
+bash scripts/compliance.sh 2>&1 | tee -a test_raw.log
+log "compliance_exit=$?"
 
 log "########## DONE（原始输出见 test_raw.log） ##########"

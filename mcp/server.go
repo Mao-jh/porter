@@ -73,7 +73,7 @@ func NewDownloader(cfg Config) *Downloader {
 // ---- 工具参数/结果类型（字段标签即 MCP schema）----
 
 type DownloadStartIn struct {
-	URL       string `json:"url" jsonschema:"必填，http/https 下载地址（默认仅允许 127.0.0.0/8 回环）"`
+	URL       string `json:"url" jsonschema:"必填，http/https/ftp/ftps 下载地址（默认仅允许 127.0.0.0/8 回环）"`
 	OutputDir string `json:"output_dir,omitempty" jsonschema:"可选，输出目录（缺省用服务端配置或当前目录）"`
 	LimitBps  int64  `json:"limit_bps,omitempty" jsonschema:"可选，本次任务限速 字节/秒（0=用服务端配置）"`
 }
@@ -137,8 +137,8 @@ func deriveOutputName(raw string) string {
 // Start 启动一个下载任务（异步；引擎完成事件写入 doneCh）。
 // 同 URL 重复调用 = 断点续传（引擎按持久化分片进度继续）。
 func (d *Downloader) Start(urlStr, outputDir string, limitBps int64) (DownloadStartOut, error) {
-	if !strings.HasPrefix(urlStr, "http://") && !strings.HasPrefix(urlStr, "https://") {
-		return DownloadStartOut{}, fmt.Errorf("仅支持 http/https URL: %s", urlStr)
+	if !startsWithAnyScheme(urlStr, "http://", "https://", "ftp://", "ftps://", "file://") {
+		return DownloadStartOut{}, fmt.Errorf("仅支持 http/https/ftp/ftps/file URL: %s", urlStr)
 	}
 	d.mu.Lock()
 	defer d.mu.Unlock()
@@ -178,6 +178,16 @@ func verifyAlgo(v string) string {
 		return ""
 	}
 	return v
+}
+
+// startsWithAnyScheme URL 前缀白名单判断（与 cli.Parse 的协议白名单保持一致）。
+func startsWithAnyScheme(s string, prefixes ...string) bool {
+	for _, p := range prefixes {
+		if strings.HasPrefix(s, p) {
+			return true
+		}
+	}
+	return false
 }
 
 // Cancel 取消运行中的任务（引擎取消路径，进度已落盘；重新 Start 同 URL 即续传）。
@@ -285,7 +295,7 @@ func NewToolServer(cfg Config) *mcp.Server {
 
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "download_start",
-		Description: "启动一个异步下载任务，立即返回 task_id；用 download_status 轮询进度。默认仅允许 127.0.0.0/8 回环地址（服务端 -allow-remote 可放开）。同 URL 重复调用会从断点续传。",
+		Description: "启动一个异步下载任务，立即返回 task_id；用 download_status 轮询进度。支持 http/https/ftp/ftps/file 协议；.m3u8 按 HLS（仅 VOD，AES-128 自动解密）、.meta4/.metalink 按 Metalink4（候选 failover + 自动哈希校验）处理。默认仅允许 127.0.0.0/8 回环地址（服务端 -allow-remote 可放开）。同 URL 重复调用会从断点续传。",
 	}, func(ctx context.Context, req *mcp.CallToolRequest, in DownloadStartIn) (*mcp.CallToolResult, DownloadStartOut, error) {
 		out, err := d.Start(in.URL, in.OutputDir, in.LimitBps)
 		if err != nil {

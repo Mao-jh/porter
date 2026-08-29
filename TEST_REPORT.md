@@ -246,3 +246,55 @@ github.com/nymjin22/downloader        ← 零第三方依赖保持
 - Wails 式教训再现：冒烟首跑失败原因为测试脚本自身的任务匹配键错误（`task_id` vs `id`）
   与诊断时误杀后台进程——非服务端缺陷；修复后全绿。
 - git 初始提交排除 128MB testdata 与测试遗留 bin（.gitignore 固化）。
+
+## 11. 第 13 轮：协议扩展（file/HLS/Metalink4）+ 开源合规（真实执行）
+
+### 11.1 交付
+- **file://**（`network/file.go`）：本地复制语义，`Mux` 按 scheme 分发；仅绝对路径
+  （host 空/localhost），Windows 盘符 `file:///C:/...` 归一。
+- **HLS（RFC 8216）**（`network/hls.go`）：`.m3u8` 自动识别。媒体/主播放列表解析
+  （EXTINF/KEY/MAP/BYTERANGE/MEDIA-SEQUENCE/ENDLIST，属性解析含引号转义）、
+  **虚拟字节映射**复用引擎的分片并行/工作窃取/字节级续传、AES-128 流式解密
+  （CBC + PKCS7 + 尾块滞留，缺省 IV=媒体序列号 128 位大端）、主列表取最高 BANDWIDTH。
+  合规守卫：直播流拒绝（无 ENDLIST）、SAMPLE-AES 拒绝（不做 DRM 绕过）、
+  播放列表 ≤1MiB/段数 ≤2048/单段 ≤64MiB/密钥 ≤8、跨主机段剥离凭据头。
+- **Metalink4（RFC 5854）**（`network/metalink.go`）：token 遍历解析（命名空间无关）、
+  priority 升序 failover（≤32 候选）、`<size>` 交叉核对、元数据哈希 → cli **期望值校验**
+  （不符删产物判失败——补齐"仅计算打印"的缺口）；输出名取 `<file name>`（显式 -o 优先）。
+- **transport 内部扩展**（公开签名冻结不变）：`probe/fetchRange` 带 headers 私有变体
+  （HLS 跨主机剥离凭据）、`getBounded`/`openStream` 元数据/流式拉取。
+- **testserver**：`/hls/`（明文/AES-128/直播/主列表端点，段自包含 Range 语义）、
+  `/key/`、`/meta4/`（failover 正例 + 坏哈希负例）；`-extra name:size` 附加文件。
+- **开源合规**：LICENSE 持有人修正（nymjin22 → Mao-jh）；SECURITY.md（报告渠道/安全边界）；
+  COMPLIANCE.md（零遥测/合法使用/第三方义务/协议自律）；`scripts/compliance.sh`
+  （零依赖断言+LICENSE+遥测扫描+UA+文档五项）；CI 新增 govulncheck 任务与
+  workflow `permissions: contents: read` 最小化。
+
+### 11.2 验收证据（原始输出见 test_raw.log / e2e 终端记录）
+```
+$ go test -count=1 ./...    （核心模块；含新增 file/hls/metalink 单测）
+ok  github.com/Mao-jh/porter/network     （解析/AES 往返/PKCS7 损坏/直播拒绝/选流/上限）
+ok  github.com/Mao-jh/porter/cli
+ok  github.com/Mao-jh/porter/testserver  （HLS 段语义 + Meta4）
+
+$ bash e2e/run_protocol.sh  （真实 exe 端到端，8 用例）
+P2 file:///… 全量下载           MATCH: file:// 内容一致
+P3 /hls/big.bin.m3u8            MATCH: HLS 明文内容一致（虚拟映射并行分片）
+P4 /hls/big.bin.enc.m3u8        MATCH: AES-128 解密内容一致
+P5 /hls/big.bin.master.m3u8     MATCH: 主列表选中高码率变体
+P6 /meta4/big.bin.meta4         MATCH: priority=1 404 → failover → 哈希校验通过
+P7 坏哈希负例                    exit=1 + "哈希不一致" + 产物已删除
+P8 直播流负例                    exit=1 + "ENDLIST" 提示
+
+$ bash scripts/compliance.sh   （五项检查）
+== 合规检查全部通过 ==（exit 0）
+
+$ go list -m all    （根模块）
+github.com/Mao-jh/porter           ← 零第三方依赖保持（第 13 轮未引入任何依赖）
+```
+
+### 11.3 边界声明（诚实）
+- HLS **仅 VOD**；加密播放列表顺序下载、**无续传**（PKCS7 明文长度不可预知，
+  虚拟映射不成立）；BYTERANGE 支持显式/缺省偏移，但跨资源缺省偏移拒绝。
+- Metalink failover 仅在探测阶段；传输中途失败不换源（字节级续传状态绑定单一源）。
+- 单元测试中 E2E 覆盖 3MiB/8MiB 量级；SFTP/BT/HTTP3 仍明确不做（零依赖约束，见 BENCHMARK）。

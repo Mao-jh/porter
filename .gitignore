@@ -35,3 +35,15 @@ testdata/
 cli/*.bin
 *.part
 mcp_err.txt
+
+# 第 12/13 轮协议 e2e 运行工件
+e2e/e2edata*/
+e2e/dbg*
+e2e/rst/
+e2e/st_*/
+e2e/statedir_ftp/
+e2e/out_*.bin*
+e2e/porter-meta4-out.bin*
+e2e/*_sha.txt
+e2e/*.log
+full_gate.log

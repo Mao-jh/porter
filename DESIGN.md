@@ -76,6 +76,39 @@ func (t *Transport) SetHeaders(h map[string]string)   // 每请求透传头（Co
 - 超时策略变更：`http.Client.Timeout` 移除（会切断低速/限速大文件），改为
   拨号 5s / TLS 握手 10s / 响应头 15s；响应体停滞由调用方上下文取消兜底。
 
+**第 12 轮新增契约（Mux 分发，DESIGN §2.3b）**：
+```go
+type Fetcher interface {   // cli 引擎依赖的最小协议面
+    Probe(ctx, urlStr) (size int64, ranged bool, err error)
+    FetchRange(ctx, urlStr string, start, end int64, dst io.WriterAt) error
+}
+func NewMux(httpT *Transport, allowRemote bool) *Mux  // http(s)/ftp(s) 按 scheme 分发
+func NewFTPTransport(allowRemote bool) *FTPTransport  // 纯标准库 FTP/FTPS 客户端
+```
+
+**第 13 轮新增契约（协议扩展：file / HLS / Metalink4）**：
+```go
+func NewFileTransport() *FileTransport        // file:// 本地复制（仅绝对路径，host 空/localhost）
+func IsHLSURL(raw string) bool                // http(s) 且路径以 .m3u8 结尾
+func NewHLSTransport(tr *Transport) *HLSTransport // 实现 Fetcher；复用 tr 的校验/UA/限速
+func IsMetalinkURL(raw string) bool           // http(s) 且路径以 .meta4/.metalink 结尾
+func FetchMetalink(ctx, tr, raw) (*Metalink, error)
+func ParseMetalink(body []byte) (*Metalink, error)
+```
+- **HLS 虚拟映射**：媒体播放列表 → 段序列 → 按明文长度映射为连续虚拟空间；
+  `Probe` 返回虚拟总长（ranged=true），引擎的分片并行/工作窃取/字节级续传零改动复用；
+  `FetchRange` 把虚拟区间翻译为 1..n 个段请求（边缘段发子 Range）。主播放列表取最高
+  BANDWIDTH 变体（深度 ≤1）。加密（AES-128）段密文含 PKCS7 填充、明文长度不可预知 →
+  `Probe` 返回 (0,false)，引擎自动退化为流式单连接顺序解密（64KiB 块 + 尾块滞留），
+  续传不可用（诚实降级）。合规边界：仅 VOD（无 ENDLIST 拒绝）、播放列表 ≤1MiB、
+  段数 ≤2048、单段 ≤64MiB、密钥 ≤8；SAMPLE-AES 等 DRM 方法显式拒绝；
+  跨主机段剥离 Cookie/Authorization/Proxy-Authorization（与重定向策略同源）。
+- **Metalink4**：候选按 priority 升序（缺省最低），探测阶段 failover（≤32 个）；
+  `<size>` 与服务端交叉核对；元数据 `<hash>` 交 cli 做**期望值校验**（不符 → 删产物判失败）。
+- **私有变体**：`Transport.probe/fetchRange(..., headers map[string]string)` 支持按请求
+  头注入（HLS 跨主机剥离用）；`getBounded`（≤max 的 GET）与 `openStream`（流式 GET）
+  供播放列表/密钥/元文件复用完整校验路径。公开签名不变（冻结原则）。
+
 ### 2.4 persist — 持久化
 ```go
 func Open(dir string) (*Store, error)

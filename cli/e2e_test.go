@@ -245,10 +245,54 @@ func TestRun_CanceledContext(t *testing.T) {
 	}
 }
 
-// TestRun_ParseRejectsFTP Parse 与传输层协议一致：拒绝 ftp（FetchRange 基于 net/http）。
-func TestRun_ParseRejectsFTP(t *testing.T) {
-	if _, err := Parse([]string{"ftp://127.0.0.1/x"}); err == nil {
-		t.Fatal("应拒绝 ftp://")
+// TestRun_ParseAcceptsFTP 第 12 轮起 Parse 接受 ftp/ftps（Mux 分发到 FTP 传输层）；
+// 其余 scheme 仍拒绝。
+func TestRun_ParseAcceptsFTP(t *testing.T) {
+	for _, good := range []string{"ftp://127.0.0.1/x", "ftps://127.0.0.1/x"} {
+		if _, err := Parse([]string{good}); err != nil {
+			t.Fatalf("应接受 %s, got %v", good, err)
+		}
+	}
+	if _, err := Parse([]string{"gopher://127.0.0.1/x"}); err == nil {
+		t.Fatal("应拒绝 gopher://")
+	}
+}
+
+// TestRun_FTP_E2E 引擎级 FTP 下载：分片并行 + sha256 闭环（经 Mux 分发）。
+func TestRun_FTP_E2E(t *testing.T) {
+	dir := t.TempDir() // HTTP 与 FTP 共用同一文件目录
+	s, err := testserver.New(testserver.Config{Dir: dir})
+	if err != nil {
+		t.Fatalf("testserver.New: %v", err)
+	}
+	t.Cleanup(func() { _ = s.Close() })
+	size := int64(12 << 20) // 12 MiB → ⌈12/8⌉≥3 分片
+	if _, err := s.CreateFile("ftp.bin", size); err != nil {
+		t.Fatalf("CreateFile: %v", err)
+	}
+	want, err := s.Checksum("ftp.bin")
+	if err != nil {
+		t.Fatalf("Checksum: %v", err)
+	}
+	ftp, err := testserver.NewFTPServer(dir, 0)
+	if err != nil {
+		t.Fatalf("NewFTPServer: %v", err)
+	}
+	defer ftp.Close()
+
+	out := filepath.Join(t.TempDir(), "ftp.bin")
+	opt := &Options{
+		URLs:     []string{ftp.FileURL("ftp.bin")},
+		Output:   out,
+		Mode:     scheduler.ModeMaxPerf,
+		Verify:   hash.SHA256,
+		StateDir: filepath.Join(t.TempDir(), "state"),
+	}
+	if err := Run(context.Background(), opt); err != nil {
+		t.Fatalf("Run(ftp): %v", err)
+	}
+	if got := sha256OfFile(t, out); got != want {
+		t.Fatalf("FTP 下载 sha256 不一致: got %s want %s", got, want)
 	}
 }
 

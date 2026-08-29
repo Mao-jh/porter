@@ -121,8 +121,8 @@ func Parse(args []string) (*Options, error) {
 	urls := make([]string, 0, fs.NArg())
 	for i := 0; i < fs.NArg(); i++ {
 		u := fs.Arg(i)
-		if !startsWithAny(u, "http://", "https://") {
-			return nil, fmt.Errorf("不支持的 URL 协议: %s（仅 http/https）", u)
+		if !startsWithAny(u, "http://", "https://", "ftp://", "ftps://", "file://") {
+			return nil, fmt.Errorf("不支持的 URL 协议: %s（仅 http/https/ftp/ftps/file）", u)
 		}
 		urls = append(urls, u)
 	}
@@ -186,6 +186,8 @@ func RunMulti(ctx context.Context, opt *Options) error {
 	if len(opt.Headers) > 0 {
 		tr.SetHeaders(opt.Headers)
 	}
+	// 协议分发：http(s) → tr，ftp(s) → FTP 传输层（共享同一限速配额，H-3 同边界）。
+	fetch := network.NewMux(tr, false)
 	outs := deriveOutputs(opt.URLs)
 	if len(opt.URLs) == 1 && opt.Output != "" {
 		outs[0] = opt.Output // 单 URL：-o 为精确文件路径（兼容单任务语义）
@@ -226,15 +228,15 @@ func RunMulti(ctx context.Context, opt *Options) error {
 				if err != nil {
 					return // ErrNoTasks（全部完成）
 				}
-				var rerr error
-				if ctxErr := ctx.Err(); ctxErr != nil {
-					rerr = ctxErr // 上下文已取消：剩余任务统一记为取消，不再发起
-				} else {
-					rerr = runOne(ctx, tr, opt, t.URL, t.ID, store)
-					if rerr == nil {
-						fmt.Fprintf(os.Stderr, "[%s] 完成 <- %s\n", t.ID, t.URL)
+					var rerr error
+					if ctxErr := ctx.Err(); ctxErr != nil {
+						rerr = ctxErr // 上下文已取消：剩余任务统一记为取消，不再发起
+					} else {
+						rerr = runOne(ctx, fetch, tr, opt, t.URL, t.ID, store)
+						if rerr == nil {
+							fmt.Fprintf(os.Stderr, "[%s] 完成 <- %s\n", t.ID, t.URL)
+						}
 					}
-				}
 				results <- result{t.ID, rerr}
 				sched.Done(t.ID)
 			}
@@ -262,9 +264,9 @@ func deriveOutputs(urls []string) []string {
 	for i, u := range urls {
 		base := ""
 		if parsed, err := url.Parse(u); err == nil {
-			base = path.Base(parsed.Path)
+			base = sanitizeFilename(path.Base(parsed.Path))
 		}
-		if base == "" || base == "." || base == "/" {
+		if base == "" {
 			base = fmt.Sprintf("download-%d.bin", i+1)
 		}
 		orig := base
@@ -278,13 +280,107 @@ func deriveOutputs(urls []string) []string {
 	return outs
 }
 
+// sanitizeFilename 将 URL 推导的文件名净化为跨平台安全形式（合规：防路径逃逸、
+// Windows 保留设备名与非法字符；策略与 mcp.deriveOutputName 一致）。
+// 返回空串表示净化后无有效名字（调用方回退默认名）。
+func sanitizeFilename(name string) string {
+	name = strings.Map(func(r rune) rune {
+		switch {
+		case r == '/' || r == '\\': // 路径分隔符：杜绝目录穿越
+			return '_'
+		case r < 0x20 || r == 0x7f: // 控制字符
+			return '_'
+		case strings.ContainsRune(`<>:"|?*`, r): // Windows 非法字符
+			return '_'
+		}
+		return r
+	}, name)
+	if name == "" || name == "." || name == ".." {
+		return ""
+	}
+	// Windows 保留设备名（不分大小写、含带扩展名形式）：CON.zip 同样被系统劫持
+	stem := name
+	if i := strings.IndexByte(stem, '.'); i >= 0 {
+		stem = stem[:i]
+	}
+	switch strings.ToUpper(stem) {
+	case "CON", "PRN", "AUX", "NUL",
+		"COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8", "COM9",
+		"LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9":
+		name = "_" + name
+	}
+	name = strings.TrimRight(name, " .") // Windows 会截断结尾空格与点
+	runes := []rune(name)
+	if len(runes) > 200 { // 超长截断（含多字节安全）
+		name = string(runes[:200])
+	}
+	return name
+}
+
+// taskSource 单任务实际下载源（Metalink 解析/选流后的产物）。
+type taskSource struct {
+	url        string
+	size       int64          // Metalink <size> 交叉核对（0=未给出）
+	verifyAlgo hash.Algorithm // Metalink 元数据哈希算法
+	verifySum  string         // 期望十六进制值（非空 → 下载后强制比对）
+}
+
+// pickCandidate Metalink 候选 failover：按 priority 升序逐个探测，首个可达者胜出。
+// 仅探测阶段 failover；传输中途失败不换源——字节级续传状态绑定单一源。
+func pickCandidate(ctx context.Context, fetch network.Fetcher, candidates []network.MetalinkURL) (string, error) {
+	var lastErr error
+	for _, c := range candidates {
+		if _, _, err := fetch.Probe(ctx, c.URL); err == nil {
+			return c.URL, nil
+		} else {
+			lastErr = err
+		}
+	}
+	return "", fmt.Errorf("metalink: 全部 %d 个候选不可达: %w", len(candidates), lastErr)
+}
+
 // runOne 执行单个 URL 的完整下载（协调 network/io/persist/hash）。
-// tr 与 store 由调用方共享：限速配额全局统一、state.json 无并发写冲突。
-func runOne(ctx context.Context, tr *network.Transport, opt *Options, urlStr, output string, store *persist.Store) error {
+// fetch/tr 与 store 由调用方共享：限速配额全局统一、state.json 无并发写冲突。
+// 第 13 轮：Metalink 元文件 → 候选 failover + 元数据哈希；.m3u8 → HLS 虚拟映射传输层。
+func runOne(ctx context.Context, fetch network.Fetcher, tr *network.Transport, opt *Options, urlStr, output string, store *persist.Store) error {
+	src := taskSource{url: urlStr}
+	if network.IsMetalinkURL(urlStr) {
+		ml, err := network.FetchMetalink(ctx, tr, urlStr)
+		if err != nil {
+			return err
+		}
+		// 输出名改用 <file name> 属性——但显式 -o（单 URL）优先，尊重用户指定
+		explicitOut := len(opt.URLs) == 1 && opt.Output != ""
+		if !explicitOut {
+			if n := sanitizeFilename(ml.Name); n != "" {
+				output = filepath.Join(filepath.Dir(output), n)
+			}
+		}
+		picked, err := pickCandidate(ctx, fetch, ml.URLs)
+		if err != nil {
+			return err
+		}
+		fmt.Fprintf(os.Stderr, "[metalink] 选用候选 %s\n", picked)
+		src.url = picked
+		src.size = ml.Size
+		if ml.HashAlgo != "" {
+			src.verifyAlgo, src.verifySum = hash.Algorithm(ml.HashAlgo), ml.HashSum
+		}
+		urlStr = src.url
+	}
+	// HLS：.m3u8 后缀自动启用虚拟映射传输层（内部复用 tr 的回环校验/UA/限速/重定向策略）
+	dlFetch := fetch
+	if network.IsHLSURL(urlStr) {
+		dlFetch = network.NewHLSTransport(tr)
+	}
+
 	// 探测资源大小与 Range 支持（决定并行分片 vs 流式单连接）
-	size, ranged, err := tr.Probe(ctx, urlStr)
+	size, ranged, err := dlFetch.Probe(ctx, urlStr)
 	if err != nil {
 		return fmt.Errorf("探测资源失败: %w", err)
+	}
+	if src.size > 0 && size > 0 && src.size != size {
+		return fmt.Errorf("metalink 大小与源不一致: 元数据 %d, 服务端 %d", src.size, size)
 	}
 
 	// 计划构造：断点续传恢复 > 显式 -n > 自动决策
@@ -313,7 +409,7 @@ func runOne(ctx context.Context, tr *network.Transport, opt *Options, urlStr, ou
 	}
 	defer sf.Abort() // 未 Commit 前保证清理
 
-	d := newDownloader(tr, urlStr, sf, plan)
+	d := newDownloader(dlFetch, urlStr, sf, plan)
 
 	// 周期性进度持久化（stop 关闭后协程退出，保证无泄漏）
 	stopFlush := make(chan struct{})
@@ -365,18 +461,30 @@ func runOne(ctx context.Context, tr *network.Transport, opt *Options, urlStr, ou
 	}
 	flushState(store, output, urlStr, size, nil, "done")
 
-	// 流式校验（H-2：固定缓冲，不全文件读入内存）
-	if opt.Verify != "" {
+	// 流式校验（H-2：固定缓冲，不全文件读入内存）。
+	// Metalink 元数据哈希（expected 非空）→ 期望值比对，不一致删除产物判失败；
+	// 否则为"计算并打印"模式（算法取 -verify，缺省 sha256）。
+	verifyAlgo := opt.Verify
+	expected := src.verifySum
+	if expected != "" {
+		verifyAlgo = src.verifyAlgo // RFC 5854 元数据为权威校验源
+	}
+	if verifyAlgo != "" {
 		f, err := os.Open(output)
 		if err != nil {
 			return err
 		}
-		defer f.Close()
-		sum, err := hash.Sum(f, opt.Verify)
+		sum, err := hash.Sum(f, verifyAlgo)
+		f.Close()
 		if err != nil {
 			return fmt.Errorf("校验失败: %w", err)
 		}
-		fmt.Fprintf(os.Stderr, "[verify] %s(%s)=%s\n", output, opt.Verify, sum)
+		if expected != "" && sum != expected {
+			_ = os.Remove(output) // 防止损坏产物被误认为完整
+			return fmt.Errorf("哈希不一致: 期望 %s(%s)=%s, 实际 %s（产物已删除）",
+				expected, verifyAlgo, expected, sum)
+		}
+		fmt.Fprintf(os.Stderr, "[verify] %s(%s)=%s\n", output, verifyAlgo, sum)
 	}
 	return nil
 }
@@ -496,7 +604,7 @@ type attempt struct {
 
 // downloader 范围队列下载引擎。
 type downloader struct {
-	tr     *network.Transport
+	tr     network.Fetcher // 协议无关（Mux 分发 http(s)/ftp(s)）
 	url    string
 	sf     *io.SparseFile
 	retryC *retry.Config
@@ -516,7 +624,7 @@ type downloader struct {
 // minStealSplit 窃取切割的最小剩余区间（1 MiB，过小不值得分裂连接）。
 const minStealSplit = 1 << 20
 
-func newDownloader(tr *network.Transport, url string, sf *io.SparseFile, plan *scheduler.Plan) *downloader {
+func newDownloader(tr network.Fetcher, url string, sf *io.SparseFile, plan *scheduler.Plan) *downloader {
 	d := &downloader{
 		tr:       tr,
 		url:      url,
@@ -711,11 +819,19 @@ func (d *downloader) runTask(parent context.Context, t rangeTask) {
 			d.fail(fmt.Errorf("分片 [%d,%d) 下载失败: %w", t.start, t.end, err))
 			return
 		}
-		// 退避后整段重试（从 t.start 重传覆盖，幂等）
+		// 退避后整段重试（从 t.start 重传覆盖，幂等）。
+		// 合规：服务端给出 Retry-After 时尊重其建议（取 max(本地退避, 建议)，上限 60s）。
+		delay := d.retryC.Backoff(try)
+		if ra, ok := network.RetryAfter(err); ok && ra > delay {
+			if ra > time.Minute {
+				ra = time.Minute
+			}
+			delay = ra
+		}
 		select {
 		case <-parent.Done():
 			return
-		case <-time.After(d.retryC.Backoff(try)):
+		case <-time.After(delay):
 		}
 	}
 }
