@@ -212,3 +212,37 @@ MATCH: 续传后 sha256 一致
 | 1 | 多个 `cli.RunMulti` 并发共享同一 state.json 会互相覆盖（每实例缓存独立全量写回） | TUI 侧每任务独立 state 子目录（URL 哈希命名），重启续传以 URL 为恢复键 |
 | 2 | 队列态任务的引擎完成事件被 `drainDone` 的 `State==Running` 守卫漏抽 → selftest 永不退出 | 引擎启动即置 Running；完成事件统一走每任务 doneCh + tick 抽取（单机制，去除 Program.Send 依赖） |
 | 3 | `persist.Store` 打开后缓存不自动刷新，轮询会读到陈旧进度 | 进度轮询直接重读 state.json（约束已写入实现注释） |
+
+
+## 10. 第 9 轮：MCP 插件 + 开源发布打包（真实执行）
+
+### 10.1 交付
+- **模块路径**：`github.com/nymjin22/downloader`（`scripts/rename_module.sh` 一键改名脚本，二次改名一条命令）
+- **MCP Server**（`mcp/` 独立 module，官方 go-sdk v1.7）：4 工具
+  `download_start`（异步）/ `download_status` / `download_cancel` / `list_tasks`（含历史恢复扫描）
+- **allowRemote 产品开关**：`-allow-remote`（默认关闭，H-3 回环边界保持；`validateURL`
+  贯穿开关语义，域名解析断言随开关联动）
+- **开源打包**：README（三形态安装/MCP 接入配置/实测数据）、MIT LICENSE、.gitignore（排除
+  128MB testdata 等大文件）、GitHub Actions CI（windows/ubuntu 矩阵 + tag 触发三平台 Release）
+
+### 10.2 验收证据
+```
+$ go test -race -count=1 ./...        (mcp module，内存传输全链路)
+ok  github.com/nymjin22/downloader/mcp  6.928s
+    ↑ start→轮询至 done→文件 sha256 一致；取消→paused→重新 start 续传→done；非法输入 isError
+
+$ python scripts/mcp_smoke.py …       (stdio 冒烟：真实 JSON-RPC 对话)
+initialize ok: downloader 1.0.0
+tools: ['download_cancel', 'download_start', 'download_status', 'list_tasks']
+download_start: {…task_id: t1, state: running}
+final state: done
+MCP STDIO SMOKE OK                    （退出码 0）
+
+$ go list -m all   （根模块）
+github.com/nymjin22/downloader        ← 零第三方依赖保持
+```
+
+### 10.3 过程记录
+- Wails 式教训再现：冒烟首跑失败原因为测试脚本自身的任务匹配键错误（`task_id` vs `id`）
+  与诊断时误杀后台进程——非服务端缺陷；修复后全绿。
+- git 初始提交排除 128MB testdata 与测试遗留 bin（.gitignore 固化）。
