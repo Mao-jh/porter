@@ -33,6 +33,8 @@ func main() {
 		mode     = flag.String("mode", "default", "CPU 模式: default|max")
 		shards   = flag.Int("n", 0, "每任务分片数（0=自动）")
 		outDir   = flag.String("out", "", "输出目录（缺省当前目录）")
+		proxy    = flag.String("proxy", "", "代理出口（http(s)://host:port 或 socks5://host:port；设置即视为允许出站）")
+		ckFile   = flag.String("load-cookies", "", "Netscape cookie.txt 路径（按域匹配注入 Cookie 头）")
 		urls     urlList
 		selftest = flag.Bool("selftest", false, "无头自检：预置 URL 自动下载，全部终态后退出")
 	)
@@ -40,9 +42,11 @@ func main() {
 	flag.Parse()
 
 	base := cli.Options{
-		StateDir: *stateDir,
-		Limit:    *limit,
-		Shards:   *shards,
+		StateDir:   *stateDir,
+		Limit:      *limit,
+		Shards:     *shards,
+		Proxy:      *proxy,
+		CookieFile: *ckFile,
 	}
 	switch *verify {
 	case "none":

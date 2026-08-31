@@ -5,8 +5,12 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"io"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -194,5 +198,81 @@ func TestMCP_RejectsBadInput(t *testing.T) {
 	}
 	if !res.IsError {
 		t.Fatal("gopher URL 应返回 isError 结果")
+	}
+}
+
+// TestMCP_ProxyAndCookies 第 15 轮：代理 + Cookie 文件配置接线——下载经代理出口
+// 成功完成（代理命中计数 >0），Cookie 文件正常加载不中断链路。
+func TestMCP_ProxyAndCookies(t *testing.T) {
+	s := NewForTest(t)
+
+	// 转发代理（绝对 URI 转发；H-3 回环内，测试目标=同机 testserver）
+	var proxied int64
+	px := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt64(&proxied, 1)
+		out, err := http.NewRequestWithContext(r.Context(), r.Method, r.URL.String(), nil)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadGateway)
+			return
+		}
+		for k, vs := range r.Header {
+			for _, v := range vs {
+				out.Header.Add(k, v)
+			}
+		}
+		resp, err := http.DefaultClient.Do(out)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadGateway)
+			return
+		}
+		defer resp.Body.Close()
+		for k, vs := range resp.Header {
+			for _, v := range vs {
+				w.Header().Add(k, v)
+			}
+		}
+		w.WriteHeader(resp.StatusCode)
+		_, _ = io.Copy(w, resp.Body)
+	}))
+	defer px.Close()
+
+	ck := filepath.Join(t.TempDir(), "cookies.txt")
+	if err := os.WriteFile(ck, []byte("127.0.0.1\tFALSE\t/\tFALSE\t1893456000\tsid\tmcp-test\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := mcpserver.Config{
+		StateRoot:  filepath.Join(t.TempDir(), "state"),
+		Verify:     "",
+		Proxy:      px.URL,
+		CookieFile: ck,
+	}
+	cs := newSession(t, cfg)
+
+	outDir := t.TempDir()
+	start := callTool(t, cs, "download_start", map[string]any{
+		"url": s.FileURL("f.bin"), "output_dir": outDir,
+	})
+	output, _ := start["output"].(string)
+
+	deadline := time.Now().Add(60 * time.Second)
+	for {
+		st, info := statusState(callTool(t, cs, "download_status", map[string]any{}), output)
+		if st == "done" {
+			break
+		}
+		if st == "failed" {
+			t.Fatalf("任务失败: %v", info)
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("60s 未完成: %v", info)
+		}
+		time.Sleep(300 * time.Millisecond)
+	}
+	if atomic.LoadInt64(&proxied) == 0 {
+		t.Fatal("请求未经过代理出口")
+	}
+	if _, err := os.Stat(output); err != nil {
+		t.Fatalf("输出文件缺失: %v", err)
 	}
 }

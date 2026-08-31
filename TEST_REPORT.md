@@ -325,3 +325,20 @@ github.com/Mao-jh/porter           ← 零第三方依赖保持（第 13 轮未�
 - CD 自动命名仅单 URL 且未显式 -o 时启用；多 URL 场景保留 URL 推导 + 预去重。
 - SOCKS5 经 net/http 原生支持（socks5:// 代理 URL），未自实现拨号——零依赖约束下最短路径。
 - NTLM/摘要认证未实现（标准库无现成实现，使用面窄，见 BENCHMARK §3.2 第 4 条）。
+
+## 13. 第 15 轮：TUI / MCP 形态补齐第 14 轮能力（代理 / Cookie）
+
+> 三形态一致性：`-proxy` / `-load-cookies` 从 CLI 同步到 TUI 与 MCP 服务端入口
+> （MCP 经 `mcpserver.Config` 透传，TUI 经 `cli.Options` 复用既有接线）。
+
+### 13.1 变更与证据
+| 形态 | 变更 | 测试 |
+|---|---|---|
+| TUI `porter-tui` | 新增 `-proxy` / `-load-cookies` 旗标（`tui/cmd/porter-tui/main.go` → `cli.Options`） | 全量门禁 TUI 模块（vet/单测/-race + `run_tui_selftest.sh` 进程级 e2e） |
+| MCP `porter-mcp` | 新增 `-proxy` / `-load-cookies` 旗标 + `mcpserver.Config.Proxy/CookieFile` → `cli.Options` | **`TestMCP_ProxyAndCookies`**（httptest 转发代理端到端：下载经代理出口完成、代理命中计数>0、cookie 文件正常加载） |
+| 共享语义 | 代理=显式出站同意、Cookie 按域匹配注入——与 CLI 完全同源（network 层实现，无重复代码） | network 层既有 9 用例回归 |
+
+### 13.2 边界声明
+- MCP/TUI 的代理与 Cookie 语义与 CLI 一致（README/USAGE 已声明）；
+  MCP `-allow-remote`（直连）与 `-proxy`（代理出口）为两条独立的受控出站通道。
+- TUI 的 `-summary` 不适用（TUI 自带界面）；`-i/-j` 不适用（任务由界面/`-url` 添加）。

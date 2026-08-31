@@ -77,6 +77,8 @@ go install github.com/Mao-jh/porter/mcp/cmd/porter-mcp@latest
 
 之后 AI 客户端即拥有 4 个工具：`download_start`（异步启动）→ `download_status`（轮询进度）
 → `download_cancel` → `list_tasks`（含历史恢复）。
+MCP 服务端同样支持 `-proxy` / `-load-cookies`（见下方命令行参数；`-allow-remote` 仍为
+直连公网目标的产品开关，代理为另一条受控出站通道）。
 
 ## 🚀 使用
 
@@ -95,6 +97,7 @@ porter tasks                                         # 列出持久化任务与�
 ```bash
 porter-tui                        # 交互界面：a 添加 / p 暂停·继续 / d 删除 / q 退出
 porter-tui --selftest -url URL    # 无头自检（CI 用）
+porter-tui -proxy socks5://127.0.0.1:1080 -load-cookies cookies.txt   # 代理/Cookie 同样适用
 ```
 
 ### MCP

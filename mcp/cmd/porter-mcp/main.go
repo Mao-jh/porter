@@ -34,6 +34,8 @@ func main() {
 		limit       = flag.Int64("limit", 0, "全局下载限速 字节/秒（0=不限）")
 		verify      = flag.String("verify", "sha256", "校验算法: sha256|sha1|md5|none")
 		outDir      = flag.String("out", "", "默认输出目录（空=进程工作目录）")
+		proxy       = flag.String("proxy", "", "代理出口（http(s)://host:port 或 socks5://host:port；设置即视为允许出站）")
+		ckFile      = flag.String("load-cookies", "", "Netscape cookie.txt 路径（按域匹配注入 Cookie 头）")
 	)
 	flag.Parse()
 
@@ -43,6 +45,8 @@ func main() {
 		Verify:      *verify,
 		Limit:       *limit,
 		OutputDir:   *outDir,
+		Proxy:       *proxy,
+		CookieFile:  *ckFile,
 	}
 	server := mcpserver.NewToolServer(cfg)
 	if err := server.Run(context.Background(), &mcp.StdioTransport{}); err != nil {

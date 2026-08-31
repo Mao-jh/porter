@@ -39,6 +39,9 @@ type Config struct {
 	Verify      string // 校验算法（""/none 跳过；sha256/sha1/md5）
 	Limit       int64  // 全局限速 字节/秒（0=不限）
 	OutputDir   string // 默认输出目录（空=进程工作目录）
+
+	Proxy      string // 代理出口（http(s)/socks5；第 14/15 轮，设置即视为允许出站）
+	CookieFile string // Netscape cookie.txt 路径（第 14/15 轮，按域匹配注入）
 }
 
 // task 运行中任务句柄。
@@ -157,11 +160,13 @@ func (d *Downloader) Start(urlStr, outputDir string, limitBps int64) (DownloadSt
 		limit = d.cfg.Limit
 	}
 	opt := cli.Options{
-		URLs:     []string{urlStr},
-		Output:   output,
-		StateDir: stateDir,
-		Limit:    limit,
-		Verify:   hash.Algorithm(verifyAlgo(d.cfg.Verify)),
+		URLs:       []string{urlStr},
+		Output:     output,
+		StateDir:   stateDir,
+		Limit:      limit,
+		Verify:     hash.Algorithm(verifyAlgo(d.cfg.Verify)),
+		Proxy:      d.cfg.Proxy,
+		CookieFile: d.cfg.CookieFile,
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	t := &task{
