@@ -96,6 +96,7 @@ porter url -load-cookies cookies.txt                 # Netscape cookie.txt 按�
 porter tasks                                         # 列出持久化任务与历史
 porter rm "out.bin" / porter clean                   # 删除任务 / 清理完成记录
 porter probe http://127.0.0.1:8080/file/big.bin      # 只探测不下载（wget --spider 对标）
+porter meta http://127.0.0.1:8080/file/big.bin       # 查看响应头（curl -I 对标）
 porter retry                                         # 续传重跑未完成任务（done 跳过）
 porter url -o - | sha256sum                          # 流式输出到 stdout（curl -o - 对标）
 ```

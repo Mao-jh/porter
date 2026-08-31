@@ -459,6 +459,42 @@ func (t *Transport) validateURL(raw string) error {
 	return nil
 }
 
+// Meta 返回资源响应头（状态行 + Header；对标 curl -I / wget --spider）。
+// HEAD 优先；被服务器拒绝时回退 Range GET bytes=0-0（与 probe 同构）。
+// 仅 http(s)；失败返回错误。
+func (t *Transport) Meta(ctx context.Context, urlStr string) (string, http.Header, error) {
+	if err := t.validateURL(urlStr); err != nil {
+		return "", nil, err
+	}
+	for _, mk := range []struct {
+		method string
+		ranged bool
+	}{{http.MethodHead, false}, {http.MethodGet, true}} {
+		req, err := http.NewRequestWithContext(ctx, mk.method, urlStr, nil)
+		if err != nil {
+			return "", nil, err
+		}
+		if mk.ranged {
+			req.Header.Set("Range", "bytes=0-0")
+		}
+		hdrs := t.snapshotHeaders()
+		for k, v := range hdrs {
+			req.Header.Set(k, v)
+		}
+		applyUserAgent(req, hdrs)
+		t.applyCookies(req, hdrs)
+		resp, err := t.client.Do(req)
+		if err != nil {
+			return "", nil, err
+		}
+		status := resp.Proto + " " + resp.Status
+		hdr := resp.Header.Clone()
+		_ = resp.Body.Close()
+		return status, hdr, nil
+	}
+	return "", nil, errors.New("meta: 无可用请求方法")
+}
+
 // FinalURL 返回重定向解析后的最终 URL（对标 wget --spider 的最终地址展示；
 // http.Client 自动跟随跳转，resp.Request.URL 即最终请求地址）。失败返回空串。
 // 仅 http(s)。供 porter probe / MCP download_probe 输出。

@@ -79,6 +79,7 @@ GOFLAGS=-mod=readonly GOPROXY=off CGO_ENABLED=0 \
 | `tasks` 子命令 | — | `porter tasks [-state-dir DIR]`：按更新时间倒序列出持久化任务（含断点续传中间态） |
 | `retry` 子命令 | — | `porter retry [-state-dir DIR] [-limit bps] [-proxy URL] [-load-cookies file] [-H "K: V"] [-verify algo]`：续传重跑 `status!=done` 的任务（串行、错误聚合；done 跳过） |
 | `probe` 子命令 | — | `porter probe <url>... [-proxy URL] [-load-cookies file] [-H "K: V"]`：只探测不下载，输出 `url=/size=/ranged=/name=/final_url=`（重定向最终地址，仅不同时输出；对标 wget --spider） |
+| `meta` 子命令 | — | `porter meta <url>... [-proxy URL] [-load-cookies file] [-H "K: V"]`：只查看响应头——状态行 + 全部 `key: value`（排序稳定；对标 curl -I） |
 | `-o` | 自动 | 单 URL=输出文件路径；`-o -`=流式输出到 stdout（单连接顺序、无续传/校验，对标 curl `-o -`）；多 URL=输出目录（文件名取自 `out=` 行内命名 > URL 推导，同名自动 -2/-3 后缀）；单 URL 省略时自动命名：服务端 `Content-Disposition` > URL 尾段 |
 | `-n` | 0（自动） | 每任务分片数；自动决策 `min(max(⌈size/8MiB⌉,3),6)`；显式 1..16 |
 | `-limit` | 0（不限） | 全局下载限速（字节/秒），跨任务跨分片共享 |

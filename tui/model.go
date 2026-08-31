@@ -64,6 +64,7 @@ type Task struct {
 	Size   int64
 	Done   int64
 	Speed  float64 // B/s（进度差分）
+	ETA    int64   // 剩余秒数（0=未知；R21 起由速率推算）
 
 	lastDone int64
 	lastAt   time.Time
@@ -380,6 +381,14 @@ func (m *Model) refreshProgress() {
 			dt := now.Sub(t.lastAt).Seconds()
 			if dt > 0 && st.Done >= t.lastDone {
 				t.Speed = float64(st.Done-t.lastDone) / dt
+			}
+		}
+		// R21：ETA = 剩余字节 / 当前速率（已知大小且速率>0 时）
+		t.ETA = 0
+		if st.FileSize > 0 && t.Speed > 0 && st.Done < st.FileSize {
+			secs := float64(st.FileSize-st.Done) / t.Speed
+			if secs < float64(int64(1)<<62) { // 防溢出
+				t.ETA = int64(secs)
 			}
 		}
 		t.lastDone, t.lastAt = st.Done, now

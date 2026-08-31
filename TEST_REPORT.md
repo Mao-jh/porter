@@ -424,3 +424,19 @@ github.com/Mao-jh/porter           ← 零第三方依赖保持（第 13 轮未�
 - `final_url` 仅 http(s) 输出；HEAD 失败自动回退 Range GET；与输入相同不输出（避免噪音）。
 - EMA 平滑延迟真实速率突变（如限速变化后 2-3 帧收敛）；任务重启（done 回落）瞬时钳 0
   但平滑速率需数帧衰减，ETA 随之逐步恢复——比瞬时值更稳但更"保守"。
+
+## 19. 第 21 轮：porter meta / TUI ETA（真实执行）
+
+> 门禁：`./run_tests.sh`（vet / 单测 / -race / 四套进程级 e2e / 合规检查 + TUI/MCP 模块，
+> 原始输出见 `test_raw.log`）。
+
+### 19.1 新增能力与测试证据
+| 能力 | 实现 | 测试（真实通过） |
+|---|---|---|
+| `porter meta`（curl -I 对标） | `Transport.Meta`（HEAD 回退 Range GET → 状态行+Header）；`cli.RunMeta` 输出 `<url> <状态行>` + 排序 `key: value` | `TestRunMeta`（状态行/Content-Length/Accept-Ranges）、`TestRunMeta_Errors`（非回环聚合报错）、`TestTransport_MetaDirect` |
+| TUI ETA | `Task.ETA` = (Size-Done)/Speed（防溢出钳 2^62）；view 追加 `ETA 1m 30s`；本地 `formatETA` | `TestRefreshProgressAndSpeed`（ETA 公式接线断言）、`TestViewAssertions`（"ETA 1m 30s" 渲染） |
+
+### 19.2 边界声明（诚实）
+- `meta` 与 `probe` 同源（HEAD→GET 0-0 回退路径）；`meta` 不做 body 下载。
+- TUI ETA 基于 500ms tick 的瞬时速率差分（未做 EMA，刷新频率高抖动可接受）；
+  已知大小且速率>0 时才有 ETA，否则不显示。

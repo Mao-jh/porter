@@ -215,6 +215,10 @@ func TestRefreshProgressAndSpeed(t *testing.T) {
 	if tk.Speed <= 0 {
 		t.Fatalf("速度差分应 >0, got %v", tk.Speed)
 	}
+	// R21：ETA = 剩余字节 / 速率（公式接线断言；数值由差分决定）
+	if want := int64(float64(tk.Size-tk.Done) / tk.Speed); tk.ETA != want {
+		t.Errorf("ETA = %d, 期望 %d", tk.ETA, want)
+	}
 }
 
 // TestReadStatesViaEngineFormat 与引擎 flushState 的真实 JSON 格式互通。
@@ -283,10 +287,10 @@ func TestViewAssertions(t *testing.T) {
 	m := newTestModel(t)
 	m.tasks = []*Task{
 		{URL: "u", Output: "ok.bin", State: StateDone, Size: 100, Done: 100},
-		{URL: "u", Output: "run.bin", State: StateRunning, Size: 200, Done: 50, Speed: 1024},
+		{URL: "u", Output: "run.bin", State: StateRunning, Size: 200, Done: 50, Speed: 1024, ETA: 90},
 	}
 	v := m.View()
-	for _, want := range []string{"ok.bin", "run.bin", "完成", "下载中", "100B/100B", "1.0KB/s", "█"} {
+	for _, want := range []string{"ok.bin", "run.bin", "完成", "下载中", "100B/100B", "1.0KB/s", "█", "ETA 1m 30s"} {
 		if !strings.Contains(v, want) {
 			t.Errorf("View 缺少 %q\n---\n%s", want, v)
 		}

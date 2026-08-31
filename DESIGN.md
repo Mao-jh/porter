@@ -261,3 +261,10 @@ cli.Run
   `cli.FinalURLFor` 供 MCP `download_probe` 复用（`final_url` 字段，缺省 omitempty）。
 - `summaryTracker` 速率 EMA 平滑（α=0.5）：首个有历史帧播种瞬时值（不做混合），
   之后 `speed = α·prev + (1-α)·instant`；瞬时速率钳 0（done 回落），ETA 按平滑速率计算。
+
+**第 21 轮新增契约（porter meta / TUI ETA）**：
+- `Transport.Meta(ctx, urlStr)`：HEAD（回退 Range GET 0-0）→ (状态行, Header 副本)；
+  `cli.RunMeta` 输出 `<url> <HTTP/1.1 200 OK>` + 排序后的 `key: value` 头
+  （对标 curl -I；支持 -proxy/-load-cookies/-H）。
+- TUI：`Task.ETA`（剩余秒）= (Size-Done)/Speed；view 追加 `ETA Xs/Xm Ys/Xh Ym`
+  （本地复制 `formatETA`，tui 独立 module 不跨导出）；防溢出钳制 2^62。

@@ -60,6 +60,9 @@ func (m Model) View() string {
 		)
 		if t.State == StateRunning && t.Speed > 0 {
 			line += " " + humanBytes(int64(t.Speed)) + "/s"
+			if t.ETA > 0 {
+				line += " ETA " + formatETA(t.ETA)
+			}
 		}
 		if t.Err != nil {
 			line += " " + styleErr.Render(trunc(t.Err.Error(), 40))
@@ -116,4 +119,21 @@ func humanBytes(n int64) string {
 		exp++
 	}
 	return fmt.Sprintf("%.1f%cB", float64(n)/float64(div), "KMGTPE"[exp])
+}
+
+// formatETA 剩余秒数 → 人类可读（Xs / Xm Ys / Xh Ym）。tui 独立 module，
+// 复制 cli.summary 的同名小工具（避免跨 module 导出）。
+func formatETA(secs int64) string {
+	if secs <= 0 {
+		return "-"
+	}
+	h, m, s := secs/3600, (secs%3600)/60, secs%60
+	switch {
+	case h > 0:
+		return fmt.Sprintf("%dh %dm", h, m)
+	case m > 0:
+		return fmt.Sprintf("%dm %ds", m, s)
+	default:
+		return fmt.Sprintf("%ds", s)
+	}
 }

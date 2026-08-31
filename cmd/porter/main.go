@@ -62,7 +62,7 @@ func main() {
 				os.Exit(1)
 			}
 			return
-		case "probe": // 探测资源：size / ranged / name（不下载）
+		case "probe": // 探测资源：size / ranged / name / final_url（不下载）
 			opt, err := cli.Parse(os.Args[2:])
 			if err != nil {
 				fmt.Fprintln(os.Stderr, "参数错误:", err)
@@ -70,6 +70,17 @@ func main() {
 			}
 			if err := cli.RunProbe(ctx, opt); err != nil {
 				fmt.Fprintln(os.Stderr, "探测失败:", err)
+				os.Exit(1)
+			}
+			return
+		case "meta": // 查看响应头：状态行 + key: value（对标 curl -I）
+			opt, err := cli.Parse(os.Args[2:])
+			if err != nil {
+				fmt.Fprintln(os.Stderr, "参数错误:", err)
+				os.Exit(2)
+			}
+			if err := cli.RunMeta(ctx, opt); err != nil {
+				fmt.Fprintln(os.Stderr, "meta 失败:", err)
 				os.Exit(1)
 			}
 			return
@@ -97,6 +108,7 @@ func main() {
   porter rm <id>... [-state-dir DIR] # 删除指定任务（拒绝运行中且有 .part 的任务）
   porter clean [-state-dir DIR]      # 清理全部 status=done 的完成记录
   porter probe <url> [-proxy URL] [-load-cookies file] [-H "K: V"]  # 只探测不下载
+  porter meta <url> [-proxy URL] [-load-cookies file] [-H "K: V"]   # 查看响应头（curl -I 对标）
   porter retry [-state-dir DIR] [-limit bps] [-proxy URL] [-load-cookies file]  # 续传重跑未完成任务`)
 		os.Exit(2)
 	}
