@@ -51,6 +51,8 @@ type Options struct {
 	Jobs       int    // 并发任务数上限（0=按 mode 自动；第 14 轮，对标 aria2 -j）
 	CookieFile string // Netscape cookie.txt 路径（空=不加载；第 14 轮）
 	Summary    bool   // 周期性进度摘要输出到 stderr（第 14 轮）
+
+	Outputs []string // 与 URLs 平行的逐任务输出名（-i 文件 "URL out=name" 行；空串=自动；第 16 轮）
 }
 
 // boolFlags 布尔标志集合：预扫描阶段不把下一个 token 消费为标志值。
@@ -120,7 +122,7 @@ func Parse(args []string) (*Options, error) {
 		stateDir = fs.String("state-dir", ".downloader", "任务状态持久化目录")
 		limit    = fs.Int64("limit", 0, "全局下载限速 字节/秒（0=不限，所有任务/分片共享）")
 		proxy    = fs.String("proxy", "", "代理出口（http://host:port 或 socks5://host:port；设置即视为允许出站）")
-		urlFile  = fs.String("i", "", "URL 列表文件（每行一个 URL，空行与 # 注释忽略；对标 aria2 -i）")
+		urlFile  = fs.String("i", "", "URL 列表文件（每行一个 URL，可带 \" out=name\" 指定输出名；空行与 # 注释忽略；对标 aria2 -i）")
 		jobs     = fs.Int("j", 0, "并发任务数上限（0=按 -mode 自动决定；对标 aria2 -j）")
 		ckFile   = fs.String("load-cookies", "", "Netscape cookie.txt 文件路径（按域匹配注入 Cookie 头）")
 		summary  = fs.Bool("summary", false, "每秒输出一次任务进度摘要到 stderr")
@@ -134,20 +136,25 @@ func Parse(args []string) (*Options, error) {
 		return nil, errors.New("用法: downloader <url|-> [url2 ...] [-i urls.txt] [-o out] [-n shards] [-j jobs] [-limit bps] [-proxy URL] [-load-cookies file] [-summary] [-H \"K: V\"] [-mode default|max] [-verify sha256]")
 	}
 	urls := make([]string, 0, fs.NArg())
+	outs := make([]string, 0, fs.NArg())
 	for i := 0; i < fs.NArg(); i++ {
 		u := fs.Arg(i)
 		if !startsWithAny(u, "http://", "https://", "ftp://", "ftps://", "file://") {
 			return nil, fmt.Errorf("不支持的 URL 协议: %s（仅 http/https/ftp/ftps/file）", u)
 		}
 		urls = append(urls, u)
+		outs = append(outs, "")
 	}
-	// -i URL 列表文件：与位置参数合并（去重保序）
+	// -i URL 列表文件：与位置参数合并；行内 " out=name" 指定输出名（第 16 轮，对标 aria2）
 	if *urlFile != "" {
 		fromFile, err := readURLFile(*urlFile)
 		if err != nil {
 			return nil, err
 		}
-		urls = append(urls, fromFile...)
+		for _, e := range fromFile {
+			urls = append(urls, e.url)
+			outs = append(outs, e.out)
+		}
 	}
 	if len(urls) == 0 {
 		return nil, errors.New("未提供任何 URL（位置参数或 -i 文件）")
@@ -187,27 +194,44 @@ func Parse(args []string) (*Options, error) {
 		Jobs:       *jobs,
 		CookieFile: *ckFile,
 		Summary:    *summary,
+		Outputs:    outs,
 	}, nil
 }
 
-// readURLFile 读取 -i URL 列表文件：每行一个 URL，空行与 # 开头注释忽略。
-func readURLFile(path string) ([]string, error) {
+// urlOutEntry 一行 -i 条目：URL 与可选输出名（"URL out=name"）。
+type urlOutEntry struct {
+	url string
+	out string
+}
+
+// readURLFile 读取 -i URL 列表文件：每行一个 URL，空行与 # 开头注释忽略；
+// 行内 " out=<name>"（空格分隔）为该任务的输出文件名（第 16 轮，对标 aria2 -i）。
+// out 名经 sanitizeFilename 净化（防路径穿越/非法字符），净化后为空则回退自动命名。
+func readURLFile(path string) ([]urlOutEntry, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, fmt.Errorf("读取 URL 列表失败: %w", err)
 	}
-	var urls []string
+	var entries []urlOutEntry
 	for _, line := range strings.Split(string(data), "\n") {
 		line = strings.TrimSpace(strings.TrimSuffix(line, "\r"))
 		if line == "" || strings.HasPrefix(line, "#") {
 			continue
 		}
-		if !startsWithAny(line, "http://", "https://", "ftp://", "ftps://", "file://") {
-			return nil, fmt.Errorf("URL 列表第 %d 行协议不支持: %s（仅 http/https/ftp/ftps/file）", len(urls)+1, line)
+		u, out := line, ""
+		if i := strings.Index(line, " out="); i >= 0 {
+			u = strings.TrimSpace(line[:i])
+			out = strings.TrimSpace(line[i+len(" out="):])
 		}
-		urls = append(urls, line)
+		if !startsWithAny(u, "http://", "https://", "ftp://", "ftps://", "file://") {
+			return nil, fmt.Errorf("URL 列表第 %d 行协议不支持: %s（仅 http/https/ftp/ftps/file）", len(entries)+1, u)
+		}
+		if out != "" {
+			out = sanitizeFilename(out) // 防路径穿越/Windows 非法字符；空 → 自动命名
+		}
+		entries = append(entries, urlOutEntry{url: u, out: out})
 	}
-	return urls, nil
+	return entries, nil
 }
 
 // Run 执行下载：单个 URL 直接下载；多个 URL 经调度器并发排队
@@ -263,10 +287,16 @@ func RunMulti(ctx context.Context, opt *Options) error {
 	// 协议分发：http(s) → tr，ftp(s) → FTP 传输层（共享同一限速配额，H-3 同边界）。
 	fetch := network.NewMux(tr, false)
 	outs := deriveOutputs(opt.URLs)
+	// -i 文件 "out=name" 逐任务命名优先于自动推导（第 16 轮；净化已在 readURLFile 完成）
+	for i := range outs {
+		if i < len(opt.Outputs) && opt.Outputs[i] != "" {
+			outs[i] = opt.Outputs[i]
+		}
+	}
 	if len(opt.URLs) == 1 && opt.Output != "" {
 		outs[0] = opt.Output // 单 URL：-o 为精确文件路径（兼容单任务语义）
 	} else if opt.Output != "" {
-		// 多 URL：-o 为输出目录，文件名自动取自 URL 并去重
+		// 多 URL：-o 为输出目录，文件名取自自动推导/out= 命名并去重
 		if err := os.MkdirAll(opt.Output, 0o755); err != nil {
 			return fmt.Errorf("创建输出目录失败: %w", err)
 		}

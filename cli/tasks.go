@@ -53,3 +53,56 @@ func listTasks(w interface{ Write([]byte) (int, error) }, states []*persist.Stat
 	}
 	return nil
 }
+
+// RemoveTasks 删除任务状态（第 16 轮，对标 aria2 任务管理）：
+//   - ids 非空：精确删除指定任务；状态为 running（含异常退出残留的"running"中间态）
+//     且对应 .part 存在时拒绝删除（可能被在途引擎占用）——需先取消或确认无进程运行；
+//   - ids 为空且 cleanOnly=true：仅清理 status=done 的完成记录（历史收尾）。
+//
+// 删除状态的同时清理同名 .part 临时文件（若存在，避免孤儿文件）。
+// 返回 (删除数, 拒绝列表, 错误)。
+func RemoveTasks(stateDir string, ids []string, cleanOnly bool) (int, []string, error) {
+	store, err := persist.Open(stateDir)
+	if err != nil {
+		return 0, nil, fmt.Errorf("打开任务状态目录失败: %w", err)
+	}
+	states := store.All()
+	byID := make(map[string]*persist.State, len(states))
+	for _, st := range states {
+		byID[st.ID] = st
+	}
+
+	var removed int
+	var refused []string
+	// cleanOnly：全部 done 状态；否则精确匹配 ids
+	targets := make(map[string]*persist.State)
+	if cleanOnly {
+		for id, st := range byID {
+			if st.Status == "done" {
+				targets[id] = st
+			}
+		}
+	} else {
+		for _, id := range ids {
+			if st, ok := byID[id]; ok {
+				targets[id] = st
+			} else {
+				refused = append(refused, fmt.Sprintf("%s（未找到）", id))
+			}
+		}
+	}
+
+	for id, st := range targets {
+		part := id + ".part"
+		if _, perr := os.Stat(part); perr == nil && st.Status == "running" {
+			refused = append(refused, fmt.Sprintf("%s（running 且有 .part，可能被在途引擎占用）", id))
+			continue
+		}
+		if err := store.Remove(id); err != nil {
+			return removed, refused, fmt.Errorf("删除 %s 失败: %w", id, err)
+		}
+		_ = os.Remove(part) // 孤儿 .part 一并清理（忽略不存在错误）
+		removed++
+	}
+	return removed, refused, nil
+}

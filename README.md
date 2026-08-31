@@ -91,6 +91,8 @@ porter url -H "Cookie: session=abc" -n 16            # 透传头 + 16 分片
 porter url -proxy socks5://127.0.0.1:1080            # 代理出口（http/https/socks5）
 porter url -load-cookies cookies.txt                 # Netscape cookie.txt 按域注入
 porter tasks                                         # 列出持久化任务与历史
+porter rm "out.bin" / porter clean                   # 删除任务 / 清理完成记录
+porter probe http://127.0.0.1:8080/file/big.bin      # 只探测不下载（wget --spider 对标）
 ```
 
 ### TUI

@@ -31,8 +31,16 @@ GOFLAGS=-mod=readonly GOPROXY=off CGO_ENABLED=0 \
 # 校验算法
 ./porter http://127.0.0.1/x -verify sha256   # sha256 | sha1 | md5 | none
 
-# URL 列表文件（每行一个 URL，# 注释与空行忽略；对标 aria2 -i）
+# URL 列表文件（每行一个 URL，# 注释与空行忽略；行尾可带 " out=name" 指定输出名；对标 aria2 -i）
 ./porter -i urls.txt -o outdir/
+
+# 任务管理子命令
+./porter tasks                                  # 列出持久化任务与历史（含可续传中间态）
+./porter rm "outdir/a.bin"                      # 删除指定任务（running 且有 .part 时拒绝）
+./porter clean                                  # 清理全部 status=done 的完成记录
+
+# 只探测不下载（对标 wget --spider；输出 key=value 便于脚本）
+./porter probe http://127.0.0.1:8080/file/big.bin
 
 # 并发任务数上限（0=按 -mode 自动；对标 aria2 -j）
 ./porter -i urls.txt -j 2
@@ -56,13 +64,15 @@ GOFLAGS=-mod=readonly GOPROXY=off CGO_ENABLED=0 \
 | 参数 | 默认 | 说明 |
 |---|---|---|
 | `<url> [url2 ...]` | 必填* | 一个或多个 URL；协议 `http/https/ftp/ftps/file`；网络协议必须解析到 127.0.0.0/8（H-3，`file://` 为本地读写不涉及；*-i 文件或 -proxy 见对应行） |
-| `-i` | 无 | URL 列表文件（每行一个 URL，`#` 注释/空行忽略）；与位置参数合并 |
+| `-i` | 无 | URL 列表文件（每行一个 URL，`#` 注释/空行忽略；行尾 ` out=<name>` 为该任务输出名，经净化防穿越）；与位置参数合并 |
 | `-j` | 0（自动） | 并发任务数上限；只下调不上调（不越过 `-mode` 的 CPU 预算） |
+| `probe` 子命令 | — | `porter probe <url> [-proxy URL] [-load-cookies file] [-H "K: V"]`：只探测不下载，输出 `url=/size=/ranged=/name=`（key=value，脚本友好；对标 wget --spider） |
+| `rm` / `clean` 子命令 | — | `porter rm <id>... [-state-dir DIR]` 删除指定任务（running 且有 `.part` 时拒绝，避免删到在途引擎）；`porter clean` 仅清理 `status=done` 完成记录；均连带清理同名 `.part` |
 | `-proxy` | 无 | 代理出口 `http(s)://host:port` 或 `socks5://host:port`；**设置即视为显式允许出站流量**（代理成为唯一出口，目标域解析交给代理） |
 | `-load-cookies` | 无 | Netscape cookie.txt 路径；按域匹配注入 Cookie 头（与 `-H "Cookie: ..."` 共存，透传优先） |
 | `-summary` | 关 | 每秒输出一次任务进度摘要到 stderr（状态 | 已完成/总大小 (百分比) | 输出 | URL） |
 | `tasks` 子命令 | — | `porter tasks [-state-dir DIR]`：按更新时间倒序列出持久化任务（含断点续传中间态） |
-| `-o` | 自动 | 单 URL=输出文件路径；多 URL=输出目录（文件名取自 URL，同名自动 -2/-3 后缀）；单 URL 省略时自动命名：服务端 `Content-Disposition` > URL 尾段 |
+| `-o` | 自动 | 单 URL=输出文件路径；多 URL=输出目录（文件名取自 `out=` 行内命名 > URL 推导，同名自动 -2/-3 后缀）；单 URL 省略时自动命名：服务端 `Content-Disposition` > URL 尾段 |
 | `-n` | 0（自动） | 每任务分片数；自动决策 `min(max(⌈size/8MiB⌉,3),6)`；显式 1..16 |
 | `-limit` | 0（不限） | 全局下载限速（字节/秒），跨任务跨分片共享 |
 | `-H` | 无 | 透传请求头 `"Key: Value"`，可重复 |

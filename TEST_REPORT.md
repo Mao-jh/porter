@@ -342,3 +342,16 @@ github.com/Mao-jh/porter           ← 零第三方依赖保持（第 13 轮未�
 - MCP/TUI 的代理与 Cookie 语义与 CLI 一致（README/USAGE 已声明）；
   MCP `-allow-remote`（直连）与 `-proxy`（代理出口）为两条独立的受控出站通道。
 - TUI 的 `-summary` 不适用（TUI 自带界面）；`-i/-j` 不适用（任务由界面/`-url` 添加）。
+
+## 14. 第 16 轮：CLI 面补齐（-i out= / rm / clean / probe，对标 aria2 / wget）
+
+### 14.1 变更与证据
+| 能力 | 实现 | 测试（真实通过） |
+|---|---|---|
+| `-i` 行内命名 | `readURLFile` 支持 `URL out=name`（空格分隔），out 经 `sanitizeFilename` 净化（防路径穿越/Windows 非法字符）；RunMulti 优先级：`out=` > URL 推导；与 `-o` 目录共存 | `TestParse_URLFileOut`（解析+净化含 `../escape.exe` 穿越用例）、`TestRun_URLFileOut`（端到端：out= 命名与自动命名产物并存落盘） |
+| `porter rm` / `porter clean` | `cli.RemoveTasks`：精确删除/仅清 done；running 且有 `.part` 拒绝（防删在途引擎）；连带清理同名 `.part` | `TestRemoveTasks`（done 删除连带 .part、running 拒绝、clean 仅清 done） |
+| `porter probe` | `cli.RunProbe`：复用 Mux 探测 + `ContentFilename`，输出 `url=/size=/ranged=/name=`（key=value 脚本友好）；支持 -proxy/-load-cookies/-H；失败聚合报错 | `TestRunProbe`（size/ranged 断言、CD name 断言、非回环报错） |
+
+### 14.2 边界声明
+- `rm` 的 running 拒绝条件 = 状态为 running **且** `.part` 存在（进程已退出但残留中间态仍可 rm，需显式二次确认由用户承担）；
+- `probe` 不触发下载、不写状态目录（无副作用）。
