@@ -2,10 +2,12 @@
 """mcp_smoke.py — MCP stdio 冒烟测试：模拟 AI 客户端与 downloader-mcp 的完整 JSON-RPC 对话。
 
 协议：MCP stdio = 换行分隔 JSON-RPC 2.0。
-流程：initialize → initialized → tools/list → download_start → 轮询 download_status 至 done。
+流程：initialize → initialized → tools/list → download_start → 轮询 download_status 至 done
+      → download_probe → 校验下载文件。
 退出码：0=通过。
 """
 import json
+import os
 import subprocess
 import sys
 import time
@@ -14,7 +16,8 @@ def main():
     exe, url = sys.argv[1], sys.argv[2]
     out_dir = sys.argv[3]
     proc = subprocess.Popen(
-        [exe], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+        [exe, "-state-root", os.path.join(out_dir, "state")],
+        stdin=subprocess.PIPE, stdout=subprocess.PIPE,
         stderr=subprocess.DEVNULL, text=True, encoding="utf-8", bufsize=1,
     )
 
@@ -48,12 +51,13 @@ def main():
     print("initialize ok:", info["name"], info["version"])
     send({"jsonrpc": "2.0", "method": "notifications/initialized"})
 
-    # 2) tools/list：应含 4 个工具
+    # 2) tools/list：应含 5 个工具
     send({"jsonrpc": "2.0", "id": 2, "method": "tools/list"})
     msg, _ = recv_until(2)
     tools = [t["name"] for t in msg["result"]["tools"]]
     print("tools:", tools)
-    assert set(tools) >= {"download_start", "download_status", "download_cancel", "list_tasks"}, tools
+    assert set(tools) >= {"download_start", "download_status", "download_cancel",
+                          "list_tasks", "download_probe"}, tools
 
     # 3) download_start
     send({"jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": {
@@ -84,6 +88,21 @@ def main():
         time.sleep(0.3)
     print("final state:", state)
     assert state == "done", state
+
+    # 5) download_probe（第 17 轮工具）：大小 / ranged / 文件名
+    send({"jsonrpc": "2.0", "id": 5, "method": "tools/call", "params": {
+        "name": "download_probe", "arguments": {"url": url}}})
+    msg, _ = recv_until(5)
+    sc = msg["result"].get("structuredContent", {})
+    print("download_probe:", sc)
+    assert sc.get("size_bytes", 0) > 0, sc
+
+    # 6) 下载产物校验：自动命名 = URL 尾段，落于 out_dir 下
+    fname = url.rstrip("/").split("/")[-1]
+    out_path = os.path.join(out_dir, fname)
+    assert os.path.isfile(out_path), f"产物缺失: {out_path}"
+    assert os.path.getsize(out_path) > 0, f"产物为空: {out_path}"
+    print("artifact ok:", out_path, os.path.getsize(out_path), "bytes")
 
     proc.stdin.close()
     proc.terminate()

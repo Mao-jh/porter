@@ -61,6 +61,8 @@ bash e2e/run_protocol.sh 2>&1 | tee -a test_raw.log
 log "protocol_exit=$?"
 bash e2e/run_tui_selftest.sh 2>&1 | tee -a test_raw.log
 log "tui_exit=$?"
+bash scripts/demo.sh $((54321 + RANDOM % 500)) 2>&1 | tee -a test_raw.log
+log "demo_exit=$?"
 
 log "########## [T6] 依赖完整性 ##########"
 go list -m all 2>&1 | tee -a test_raw.log

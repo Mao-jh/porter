@@ -95,14 +95,17 @@ GOFLAGS=-mod=readonly GOPROXY=off CGO_ENABLED=0 \
 
 ## 示例（端到端，使用 cmd/testserver）
 ```bash
-# 终端 A：启动本地测试服务端（127.0.0.1 随机端口，-limit 限速字节/秒可选）
-go run ./cmd/testserver -dir ./e2edata -name big.bin -size 67108864 -limit 4194304
-# stdout: file=... size=... url=http://127.0.0.1:PORT/file/big.bin
+# 终端 A：启动本地测试服务端（-addr 固定端口，避免随机端口带来的 URL 不确定；
+# -limit 限速字节/秒可选）
+./bin/testserver.exe -addr 127.0.0.1:54321 -name big.bin -size 67108864 -limit 4194304
+# stdout: file=... size=... url=http://127.0.0.1:54321/file/big.bin
 
 # 终端 B：下载（自动分片并行 + 完成后 sha256 校验）
-./porter http://127.0.0.1:PORT/file/big.bin -o big.bin -verify sha256
+./porter http://127.0.0.1:54321/file/big.bin -o big.bin -verify sha256
 # stderr: [verify] big.bin(sha256)=<hex>
 ```
+
+一键试用：`./scripts/demo.sh`（起服务端 → 12 项核心能力演示 → 自动清理，全部通过时退出码 0）。
 
 ## 约束提示
 - **仅本地/回环**：所有 URL 必须解析到 `127.0.0.0/8`，公网地址被拒绝（H-3）。

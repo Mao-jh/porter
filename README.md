@@ -95,6 +95,24 @@ MCP 服务端同样支持 `-proxy` / `-load-cookies`（见下方命令行参数�
 
 示例调用：`download_start {"url":"http://127.0.0.1:8080/file.bin","output_dir":"/tmp/dl","limit_bps":10485760}`。
 
+## ⚡ 快速试用（5 分钟）
+
+一个脚本跑完全部核心能力（本地服务端 + 固定端口，自动清理），适合新环境/CI 验收：
+
+```bash
+./scripts/demo.sh            # 12 项检查：下载/sha256/probe/meta/tasks/批量/限速/强杀续传/MCP
+./scripts/demo.sh 54322      # 指定端口（默认 54321）
+```
+
+手工起服务端（**端口可固定**，不再随机）：
+
+```bash
+./bin/testserver.exe -addr 127.0.0.1:54321 -size 16777216 -name big.bin
+# url=http://127.0.0.1:54321/file/big.bin   ← 端口确定，可直接复制到下面命令
+```
+
+MCP 单测冒烟：`python scripts/mcp_smoke.py mcp/porter-mcp.exe <url> <out_dir>`
+
 ## 🚀 使用
 
 ### CLI

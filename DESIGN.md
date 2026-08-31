@@ -277,3 +277,7 @@ cli.Run
 - 输出文件打开失败时检测父目录缺失：`cli.runOne` 报 `输出目录不存在 %q（请先创建…）`；
   `preflightDisk` 查询失败警告同步提示目录缺失——与 curl 语义一致（不自动建目录），
   但报错人读友好。
+- 可验证性：`cmd/testserver` 增 `-addr`（固定监听地址，默认仍 `127.0.0.1:0` 随机）；
+  `scripts/demo.sh` 一键试用（12 项核心能力演示 + 自动清理，退出码可断言）纳入
+  `run_tests.sh` T5；`scripts/mcp_smoke.py` 为 MCP stdio 冒烟（逐条 JSON-RPC、
+  `-state-root` 隔离、含 probe 与产物校验）。

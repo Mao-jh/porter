@@ -1,10 +1,11 @@
 // Command testserver 启动本地环回（127.0.0.1）测试服务端，供端到端验证使用。
 // 用法：
 //
-//	testserver -dir DIR -name big.bin -size 67108864
+//	testserver -dir DIR -name big.bin -size 67108864 -addr 127.0.0.1:54321
 //
 // 启动后打印文件路径与下载 URL（stdout），Ctrl+C 或 kill 退出。
 // 内容为确定性偏移相关模式填充，可通过 PatternFill 复算或直接比对 sha256。
+// 默认监听随机端口；-addr 可固定（如 127.0.0.1:54321），便于脚本/文档示例直接引用。
 package main
 
 import (
@@ -27,9 +28,10 @@ func main() {
 	limit := flag.Int64("limit", 0, "限速（字节/秒，0=不限）；用于复现下载中途中断")
 	useFTP := flag.Bool("ftp", false, "同时启动 FTP 服务端（额外打印 ftp:// URL）")
 	extra := flag.String("extra", "", "附加测试文件 \"名称:字节数[,名称2:字节数2...]\"（如 master 变体需要的 tiny.bin）")
+	addr := flag.String("addr", "", "监听地址（默认 127.0.0.1:0 随机端口；固定如 127.0.0.1:54321 供脚本复用）")
 	flag.Parse()
 
-	cfg := testserver.Config{LimitBytesPerSec: *limit}
+	cfg := testserver.Config{LimitBytesPerSec: *limit, Addr: *addr}
 	if *dir != "" {
 		abs, err := filepath.Abs(*dir)
 		if err != nil {
