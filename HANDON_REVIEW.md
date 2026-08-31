@@ -253,9 +253,16 @@ ffmpeg，缺失时明确报错并给安装指引——诚实降级，非假装�
 未回退。当前全部门禁绿色：demo 12/12、discover/media 16/16、定向 9/9、
 vet/test 干净。
 
-遗留建议（未在本轮处理）：
-1. `run_discover_media.sh` / `retest_fixes.sh` 仍为独立脚本，未挂进
-   `run_tests.sh` 门禁——建议纳入 CI 防回归（本次 ③④⑤ 类问题就是
-   缺验收覆盖才漏网的）。
+遗留建议：
+1. ~~`run_discover_media.sh` / `retest_fixes.sh` 未挂进门禁~~ **已落地**：`run_tests.sh`
+   新增 **[T5b] 段**（链接发现/抗劣化/后处理 + 修复点定向复测），T4 构建产物统一为
+   `porter_linux`（原 `downloader_linux` 旧名残留一并修正）；`retest_fixes.sh` 端口
+   基址参数化（`PBASE=` 可覆盖）避免与门禁其他段冲突。**另发现并修复 `e2e/run_multi.sh`
+   引用已删除的 `bin/downloader.exe`（门禁 T5 段必挂的隐患）**。完整 `./run_tests.sh`
+   实测 7m35s 全绿：vet/test/race 0、T5 各 e2e 段 0、demo 12/12、discover_media 16/16、
+   retest 9/9、T6 依赖仅本 module、T7 合规通过。
 2. `find -probe` 对非回环链接默认 H-3 拒绝，可考虑 `-allow-remote` 开关
    （同第一部分建议 2）。
+3. 附注：`run_tests.sh` 的 `xxx_exit=$?` 均取在管道 `| tee` 之后，测的是 tee 的
+   退出码（恒 0，无断言意义）——各脚本自身的 `PASS=/FAIL=` 汇总才是有效断言，
+   建议后续改为 `PIPESTATUS` 取真实退出码。

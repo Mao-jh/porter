@@ -40,7 +40,7 @@ cat src_sha.txt
 
 echo "=== [M1] 三任务并发 + -o 目录 + 全局限速 12MiB/s ==="
 START=$(date +%s)
-"$BIN/downloader.exe" "$BASE/file/m1.bin" "$BASE/file/m2.bin" "$BASE/file/m3.bin" \
+"$BIN/porter.exe" "$BASE/file/m1.bin" "$BASE/file/m2.bin" "$BASE/file/m3.bin" \
   -o outdir -limit $((12*1024*1024)) -verify sha256
 END=$(date +%s)
 echo "elapsed=$((END-START))s（3 文件共 80MiB@12MiBps 理论下限 ≥6.7s）"
@@ -56,7 +56,7 @@ for n in ('m1.bin','m2.bin','m3.bin'):
 if diff src_sha.txt out_sha.txt; then echo "MATCH: 三任务内容全部一致"; else echo "MISMATCH"; kill $TS_PID 2>/dev/null; exit 1; fi
 
 echo "=== [M3] 单任务 + -H 透传冒烟 ==="
-"$BIN/downloader.exe" "$BASE/file/m3.bin" -H "X-Probe: 1" -o outdir/h.bin >/dev/null 2>&1 && echo "带 -H 下载 OK"
+"$BIN/porter.exe" "$BASE/file/m3.bin" -H "X-Probe: 1" -o outdir/h.bin >/dev/null 2>&1 && echo "带 -H 下载 OK"
 ls -la outdir/
 kill $TS_PID 2>/dev/null || true
 echo "=== MULTI E2E DONE ==="

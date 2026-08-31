@@ -32,9 +32,9 @@ log "race_exit=$?"
 log "########## [T4] 产物构建 ##########"
 CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o bin/porter.exe ./cmd/porter 2>&1 | tee -a test_raw.log
 CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o bin/testserver.exe ./cmd/testserver 2>&1 | tee -a test_raw.log
-GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o bin/downloader_linux ./cmd/porter 2>&1 | tee -a test_raw.log
+GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o bin/porter_linux ./cmd/porter 2>&1 | tee -a test_raw.log
 ls -lh bin/ 2>&1 | tee -a test_raw.log
-file bin/porter.exe bin/testserver.exe bin/downloader_linux 2>&1 | tee -a test_raw.log
+file bin/porter.exe bin/testserver.exe bin/porter_linux 2>&1 | tee -a test_raw.log
 
 log "########## [T4b] TUI 模块（独立 module） ##########"
 (cd tui && CGO_ENABLED=0 go vet ./... 2>&1 | tee -a ../test_raw.log; log "tui_vet_exit=$?"
@@ -63,6 +63,12 @@ bash e2e/run_tui_selftest.sh 2>&1 | tee -a test_raw.log
 log "tui_exit=$?"
 bash scripts/demo.sh $((54321 + RANDOM % 500)) 2>&1 | tee -a test_raw.log
 log "demo_exit=$?"
+
+log "########## [T5b] 链接发现/抗劣化/后处理 + 修复点定向复测（第 23/24 轮） ##########"
+bash scripts/run_discover_media.sh $((54323 + RANDOM % 400)) 2>&1 | tee -a test_raw.log
+log "discover_media_exit=$?"
+bash scripts/retest_fixes.sh 2>&1 | tee -a test_raw.log
+log "retest_exit=$?"
 
 log "########## [T6] 依赖完整性 ##########"
 go list -m all 2>&1 | tee -a test_raw.log
