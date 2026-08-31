@@ -73,6 +73,17 @@ func main() {
 				os.Exit(1)
 			}
 			return
+		case "retry": // 续传重跑状态目录中的未完成任务
+			opt, err := cli.ParseRetry(os.Args[2:])
+			if err != nil {
+				fmt.Fprintln(os.Stderr, "参数错误:", err)
+				os.Exit(2)
+			}
+			if err := cli.RunRetry(ctx, opt); err != nil {
+				fmt.Fprintln(os.Stderr, "retry 失败:", err)
+				os.Exit(1)
+			}
+			return
 		}
 	}
 
@@ -85,7 +96,8 @@ func main() {
   porter tasks [-state-dir DIR]      # 列出持久化任务与历史
   porter rm <id>... [-state-dir DIR] # 删除指定任务（拒绝运行中且有 .part 的任务）
   porter clean [-state-dir DIR]      # 清理全部 status=done 的完成记录
-  porter probe <url> [-proxy URL] [-load-cookies file] [-H "K: V"]  # 只探测不下载`)
+  porter probe <url> [-proxy URL] [-load-cookies file] [-H "K: V"]  # 只探测不下载
+  porter retry [-state-dir DIR] [-limit bps] [-proxy URL] [-load-cookies file]  # 续传重跑未完成任务`)
 		os.Exit(2)
 	}
 	opt, err := cli.Parse(os.Args[1:])

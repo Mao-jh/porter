@@ -58,6 +58,8 @@ GOFLAGS=-mod=readonly GOPROXY=off CGO_ENABLED=0 \
 # 进度摘要（每秒一行到 stderr，不刷屏）+ 任务列表子命令
 ./porter -i urls.txt -summary
 ./porter tasks                                # 列出持久化任务与历史（含可续传中间态）
+./porter retry [-state-dir DIR]               # 续传重跑未完成任务（done 跳过）
+./porter probe <url>                          # 只探测不下载：size/ranged/name
 ```
 
 ## 参数
@@ -72,6 +74,8 @@ GOFLAGS=-mod=readonly GOPROXY=off CGO_ENABLED=0 \
 | `-load-cookies` | 无 | Netscape cookie.txt 路径；按域匹配注入 Cookie 头（与 `-H "Cookie: ..."` 共存，透传优先） |
 | `-summary` | 关 | 每秒输出一次任务进度摘要到 stderr（状态 | 已完成/总大小 (百分比) | 输出 | URL） |
 | `tasks` 子命令 | — | `porter tasks [-state-dir DIR]`：按更新时间倒序列出持久化任务（含断点续传中间态） |
+| `retry` 子命令 | — | `porter retry [-state-dir DIR] [-limit bps] [-proxy URL] [-load-cookies file] [-H "K: V"] [-verify algo]`：续传重跑 `status!=done` 的任务（串行、错误聚合；done 跳过） |
+| `probe` 子命令 | — | `porter probe <url>... [-proxy URL] [-load-cookies file] [-H "K: V"]`：只探测不下载，输出 `url=/size=/ranged=/name=` |
 | `-o` | 自动 | 单 URL=输出文件路径；多 URL=输出目录（文件名取自 `out=` 行内命名 > URL 推导，同名自动 -2/-3 后缀）；单 URL 省略时自动命名：服务端 `Content-Disposition` > URL 尾段 |
 | `-n` | 0（自动） | 每任务分片数；自动决策 `min(max(⌈size/8MiB⌉,3),6)`；显式 1..16 |
 | `-limit` | 0（不限） | 全局下载限速（字节/秒），跨任务跨分片共享 |
@@ -112,7 +116,8 @@ go run ./cmd/testserver -dir ./e2edata -name big.bin -size 67108864 -limit 41943
 - **协议**：`http/https/ftp/ftps/file`；服务器不支持 Range 时自动退化为流式单连接。
 - **HLS（.m3u8）**：URL 路径以 `.m3u8` 结尾自动按 HLS 处理——仅 VOD（直播流拒绝）、
   主播放列表自动选最高码率、AES-128 自动解密（加密流顺序下载、无续传）；
-  明文流完整保留分片并行与字节级续传。建议显式 `-o` 指定输出文件名。
+  明文流完整保留分片并行与字节级续传。未显式 `-o` 时输出名自动去 `.m3u8` 后缀
+  （服务端 Content-Disposition 优先）。
 - **Metalink4（.meta4/.metalink）**：自动识别并解析候选列表，按 priority 升序 failover
   （探测阶段；传输中途失败不换源）；元数据 `<hash>` 自动与实际值比对，
   不一致判任务失败并删除产物；显式 `-o` 优先于元数据中的文件名。

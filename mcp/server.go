@@ -118,6 +118,34 @@ type DownloadCancelOut struct {
 
 type ListTasksIn struct{}
 
+// ---- 探测（第 17 轮，对标 CLI porter probe）----
+
+type DownloadProbeIn struct {
+	URL string `json:"url" jsonschema:"必填，要探测的 URL（http/https/ftp/ftps/file）"`
+}
+
+type DownloadProbeOut struct {
+	URL    string `json:"url"`
+	Size   int64  `json:"size_bytes"` // 0=未知（流式）
+	Ranged bool   `json:"ranged"`     // 服务端是否支持 Range（可并行分片）
+	Name   string `json:"name,omitempty"`
+	Error  string `json:"error,omitempty"`
+}
+
+// Probe 探测单个 URL：大小 / Range 支持 / 服务端建议文件名（不下载）。
+// 复用 cli.ProbeURL（与 porter probe 同一传输构建 + 协议分发 + CD 查询路径）。
+func (d *Downloader) Probe(ctx context.Context, urlStr string) (DownloadProbeOut, error) {
+	if !startsWithAnyScheme(urlStr, "http://", "https://", "ftp://", "ftps://", "file://") {
+		return DownloadProbeOut{}, fmt.Errorf("仅支持 http/https/ftp/ftps/file URL: %s", urlStr)
+	}
+	size, ranged, name, err := cli.ProbeURL(ctx, d.cfg.Proxy, d.cfg.CookieFile,
+		d.cfg.AllowRemote, nil, urlStr)
+	if err != nil {
+		return DownloadProbeOut{}, err
+	}
+	return DownloadProbeOut{URL: urlStr, Size: size, Ranged: ranged, Name: name}, nil
+}
+
 // ---- 核心逻辑 ----
 
 func (d *Downloader) stateDirFor(urlStr string) string {
@@ -332,6 +360,17 @@ func NewToolServer(cfg Config) *mcp.Server {
 		Description: "列出全部下载任务（等价于 download_status 不带参数）。",
 	}, func(ctx context.Context, req *mcp.CallToolRequest, in ListTasksIn) (*mcp.CallToolResult, DownloadStatusOut, error) {
 		return nil, d.Status(""), nil
+	})
+
+	mcp.AddTool(s, &mcp.Tool{
+		Name:        "download_probe",
+		Description: "探测目标资源：大小 / 是否支持 Range（可否并行分片）/ 服务端建议文件名（Content-Disposition），不下载。返回 size_bytes=0 表示大小未知（流式）。",
+	}, func(ctx context.Context, req *mcp.CallToolRequest, in DownloadProbeIn) (*mcp.CallToolResult, DownloadProbeOut, error) {
+		out, err := d.Probe(ctx, in.URL)
+		if err != nil {
+			return errResult[DownloadProbeOut](err), DownloadProbeOut{}, nil
+		}
+		return nil, out, nil
 	})
 
 	return s

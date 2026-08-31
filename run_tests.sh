@@ -42,6 +42,12 @@ log "########## [T4b] TUI 模块（独立 module） ##########"
  CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o porter-tui.exe ./cmd/porter-tui 2>&1 | tee -a ../test_raw.log
  log "tui_build_exit=$?")
 
+log "########## [T4c] MCP 模块（独立 module） ##########"
+(cd mcp && CGO_ENABLED=0 go vet ./... 2>&1 | tee -a ../test_raw.log; log "mcp_vet_exit=$?"
+ CGO_ENABLED=1 go test -race -count=1 ./... 2>&1 | tee -a ../test_raw.log; log "mcp_race_exit=$?"
+ CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o porter-mcp.exe ./cmd/porter-mcp 2>&1 | tee -a ../test_raw.log
+ log "mcp_build_exit=$?")
+
 log "########## [T5] 端到端（进程级） ##########"
 bash e2e/run_e2e.sh 2>&1 | tee -a test_raw.log
 log "e2e_exit=$?"

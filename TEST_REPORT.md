@@ -355,3 +355,21 @@ github.com/Mao-jh/porter           ← 零第三方依赖保持（第 13 轮未�
 ### 14.2 边界声明
 - `rm` 的 running 拒绝条件 = 状态为 running **且** `.part` 存在（进程已退出但残留中间态仍可 rm，需显式二次确认由用户承担）；
 - `probe` 不触发下载、不写状态目录（无副作用）。
+
+## 15. 第 17 轮：MCP 探测 / retry 子命令 / 续传守卫 / HLS 自动命名（真实执行）
+
+> 门禁：`./run_tests.sh`（vet / 单测 / -race / 四套进程级 e2e / 合规检查，原始输出见 `test_raw.log`）。
+
+### 15.1 新增能力与测试证据
+| 能力 | 实现 | 测试（真实通过） |
+|---|---|---|
+| MCP `download_probe`（第 5 个工具） | `cli.ProbeURL` 语义同源（buildTransport 统一 proxy/cookie/headers 构建，RunMulti/RunProbe/retry 共用；AllowRemote 透传） | `TestMCP_DownloadProbe`（size/ranged/CD 名）、`TestMCP_DownloadProbe_Errors`（非法 scheme / 非回环 → isError） |
+| `porter retry` 子命令 | `cli.ParseRetry/RunRetry`：串行续传重跑 store 中 `status!=done` 任务（按 UpdatedAt 升序，错误聚合，done 跳过） | `TestRunRetry_SkipsDoneAndResumesPending`（done 跳过 + running 重跑至 sha256 一致 + 状态落 done）、`TestRunRetry_NoPending`、`TestParseRetry` |
+| 续传守卫（健壮性修复） | 恢复分片计划前校验 `.part` 存在且尺寸==期望；不符删除并全新下载（防"误删 .part 后按旧状态续传产生空洞损坏文件"） | `TestResumeGuard_PartWrongSize`（状态声称 50%，.part 仅 1 字节 → 全新下载 sha256 一致）、`TestRunRetry_*` 覆盖 |
+| HLS 自动命名 | 未显式 `-o` 时输出名去 `.m3u8` 后缀（CD 名优先） | `TestRun_HLSAutoName`（/hls/big.bin.m3u8 无 -o → 产物 big.bin，sha256 与源一致，且无 .m3u8 残留） |
+| 探测复用重构 | `buildTransport`/`ProbeURL` 抽出，CLI probe 与 MCP 同一路径 | `TestProbeURL_CD`（普通文件 + CD 端点 size/ranged/name）；`TestRun_JobsCap` 等既有门禁回归全过 |
+
+### 15.2 边界声明（诚实）
+- `retry` 串行执行（确定性）；单个失败聚合报错，不影响其余任务。
+- 续传守卫仅校验 `.part` 尺寸；不校验分片级内容（引擎 Range 强制 + 覆盖守卫已有三层防线）。
+- MCP `download_probe` 复用 CLI 语义：默认 H-3 回环；`-proxy` 时目标域解析交给代理。

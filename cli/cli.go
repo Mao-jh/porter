@@ -259,30 +259,19 @@ func RunMulti(ctx context.Context, opt *Options) error {
 	}
 	// 单一共享 Transport：全局限速配额由所有任务/分片共同消耗
 	//（若每任务独立 Transport，-limit 会变成"每任务限额"而非全局限额）。
-	tr := newTransport()
-	tr.SetGlobalLimit(opt.Limit)
-	if len(opt.Headers) > 0 {
-		tr.SetHeaders(opt.Headers)
+	// 单一共享 Transport：全局限速配额由所有任务/分片共同消耗
+	//（若每任务独立 Transport，-limit 会变成"每任务限额"而非全局限额）。
+	tr, nCookies, err := buildTransport(opt, false)
+	if err != nil {
+		return err
 	}
+	tr.SetGlobalLimit(opt.Limit)
 	// 代理出口（第 14 轮）：设置即视为显式允许出站（network 层自动置 allowRemote）
 	if opt.Proxy != "" {
-		if err := tr.SetProxy(opt.Proxy); err != nil {
-			return fmt.Errorf("代理配置失败: %w", err)
-		}
 		fmt.Fprintf(os.Stderr, "[proxy] 出口 %s（远程目标已随代理显式放行）\n", opt.Proxy)
 	}
-	// Netscape cookie 文件（第 14 轮）：按域匹配注入 Cookie 头
-	if opt.CookieFile != "" {
-		data, err := os.ReadFile(opt.CookieFile)
-		if err != nil {
-			return fmt.Errorf("读取 cookie 文件失败: %w", err)
-		}
-		cs, err := network.ParseNetscapeCookies(data)
-		if err != nil {
-			return fmt.Errorf("解析 cookie 文件失败: %w", err)
-		}
-		tr.SetCookies(cs)
-		fmt.Fprintf(os.Stderr, "[cookies] 已加载 %d 条（按域匹配）\n", len(cs))
+	if nCookies > 0 {
+		fmt.Fprintf(os.Stderr, "[cookies] 已加载 %d 条（按域匹配）\n", nCookies)
 	}
 	// 协议分发：http(s) → tr，ftp(s) → FTP 传输层（共享同一限速配额，H-3 同边界）。
 	fetch := network.NewMux(tr, false)
@@ -476,6 +465,8 @@ func pickCandidate(ctx context.Context, fetch network.Fetcher, candidates []netw
 // fetch/tr 与 store 由调用方共享：限速配额全局统一、state.json 无并发写冲突。
 // 第 13 轮：Metalink 元文件 → 候选 failover + 元数据哈希；.m3u8 → HLS 虚拟映射传输层。
 func runOne(ctx context.Context, fetch network.Fetcher, tr *network.Transport, opt *Options, urlStr, output string, store *persist.Store) error {
+	// 显式 -o（单 URL）时输出名完全由用户决定，任何自动命名（Metalink/CD/HLS）均不生效
+	explicitOut := len(opt.URLs) == 1 && opt.Output != ""
 	src := taskSource{url: urlStr}
 	named := false // Metalink <file name> 已提供名字则跳过 Content-Disposition 推断
 	if network.IsMetalinkURL(urlStr) {
@@ -484,7 +475,6 @@ func runOne(ctx context.Context, fetch network.Fetcher, tr *network.Transport, o
 			return err
 		}
 		// 输出名改用 <file name> 属性——但显式 -o（单 URL）优先，尊重用户指定
-		explicitOut := len(opt.URLs) == 1 && opt.Output != ""
 		if !explicitOut {
 			if n := sanitizeFilename(ml.Name); n != "" {
 				output = filepath.Join(filepath.Dir(output), n)
@@ -515,6 +505,13 @@ func runOne(ctx context.Context, fetch network.Fetcher, tr *network.Transport, o
 	dlFetch := fetch
 	if network.IsHLSURL(urlStr) {
 		dlFetch = network.NewHLSTransport(tr)
+		// R17：单 URL 未显式 -o 时，HLS 输出名去 .m3u8 后缀（CD 名优先，已在上方处理；
+		// 此处兜底 URL 尾段命名，避免产物带播放列表后缀）
+		if !explicitOut {
+			if b := filepath.Base(output); strings.HasSuffix(strings.ToLower(b), ".m3u8") {
+				output = filepath.Join(filepath.Dir(output), strings.TrimSuffix(b, ".m3u8"))
+			}
+		}
 	}
 
 	// 探测资源大小与 Range 支持（决定并行分片 vs 流式单连接）
@@ -531,8 +528,15 @@ func runOne(ctx context.Context, fetch network.Fetcher, tr *network.Transport, o
 	resume := false
 	if st, ok := store.Get(output); ok && st.Status != "done" &&
 		size > 0 && st.FileSize == size && len(st.Shards) > 0 {
-		plan = planFromState(st, size)
-		resume = true
+		// R17 健壮性：仅当 .part 存在且尺寸与期望一致才续传；否则全新下载
+		//（防止用户误删 .part 后按旧状态续传产生"已完成区为空洞"的损坏文件）
+		if info, err := os.Stat(output + ".part"); err == nil && info.Size() == size {
+			plan = planFromState(st, size)
+			resume = true
+		} else if err == nil {
+			// .part 存在但尺寸不符（半截）：直接从头覆盖
+			_ = os.Remove(output + ".part")
+		}
 	} else if size > 0 && ranged {
 		plan = scheduler.NewPlanN(size, opt.Shards)
 	}

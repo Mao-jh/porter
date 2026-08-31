@@ -130,6 +130,20 @@ func (t *Transport) ContentFilename(ctx, urlStr) string   // RFC 6266/5987 文�
   只下调不上调）、`-proxy`、`-load-cookies`、`-summary`（每秒 store 快照摘要）；
   `porter tasks [-state-dir]` 子命令列出持久化任务（`cli.listTasks`，注入 Writer 可测）。
 
+**第 17 轮新增契约（探测复用 / retry / 续传守卫 / HLS 命名）**：
+```go
+func buildTransport(opt *Options, allowRemote bool) (*network.Transport, int, error) // proxy/cookie/headers 统一构建（RunMulti/RunProbe/retry 共用）
+func ProbeURL(ctx, proxy, cookieFile string, allowRemote bool, headers map[string]string, urlStr string) (size int64, ranged bool, name string, err error) // porter probe 与 MCP download_probe 共用
+func ParseRetry(args []string) (*Options, error)  // retry 子命令旗标（无 URL 位置参数）
+func RunRetry(ctx, opt *Options) error            // 串行续传重跑 store 中 status!=done 的任务（错误聚合）
+```
+- **续传守卫（健壮性修复）**：恢复分片计划前校验 `.part` 存在且尺寸与期望一致；
+  缺失/不符则删除半截 `.part` 并全新下载——杜绝"误删 .part 后按旧状态续传产生
+  已完成区为空洞的损坏文件"。
+- **HLS 自动命名**：未显式 `-o` 时输出名去 `.m3u8` 后缀（CD 名优先；单/多 URL 同规则）。
+- **MCP download_probe**：第 5 个工具，`cli.ProbeURL` 语义同源（-proxy/-load-cookies/
+  AllowRemote 透传），输出 size_bytes/ranged/name。
+
 ### 2.4 persist — 持久化
 ```go
 func Open(dir string) (*Store, error)
