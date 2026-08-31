@@ -275,3 +275,9 @@ vet/test 干净。
      在沙箱批量删除守卫下失败触发 `set -e`。修复：全部清理 rm 加 `|| true` 容错。
    - 修复后沙箱外独立验证 3 脚本 EXIT=0；沙箱内完整门禁 13 段退出码**全部真实为 0**
      （e2e/ftp/tui 从 1 → 0），MATCH 断言全命中，demo 12/12、discover 16/16、retest 9/9。
+4. **门禁现已可作 CI 断言**：新增 **[T8] 聚合段**——`gate_check` 解析 test_raw.log
+   全部 `*_exit=` 记录（正则已覆盖带数字的段名，如 `e2e_exit`/`porter_build_exit`），
+   任一非 0 → `GATE_RESULT: HAS_FAILURES` 且进程退出码非 0（quick 模式同样聚合）。
+   同时修复 T4b/T4c 子 shell 退出码落盘路径（原 `log` 相对路径写进 tui//mcp/
+   子目录，根日志缺失 6 个段）与 T4 构建/T6 的退出码记录。完整门禁实测 9m55s：
+   **23 个段全部 GATE-OK → ALL_PASS**。
