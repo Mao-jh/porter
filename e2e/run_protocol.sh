@@ -5,7 +5,7 @@ set -e
 cd "$(dirname "$0")"
 BIN=../bin
 DATA=e2edata_proto
-rm -rf "$DATA" out_file.bin* out_hls.bin* out_enc.bin* out_master.bin* out_meta4*.bin* ts_proto.log porter-meta4-out.bin*
+rm -rf "$DATA" out_file.bin* out_hls.bin* out_enc.bin* out_master.bin* out_meta4*.bin* ts_proto.log porter-meta4-out.bin* 2>/dev/null || true
 mkdir -p "$DATA"
 
 SIZE=$((8*1024*1024))  # 8 MiB → 8 个 1MiB 段（虚拟映射 ≥5MiB → 并行分片路径）

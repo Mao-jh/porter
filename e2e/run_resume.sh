@@ -6,7 +6,7 @@ BIN=../bin
 DATA=rdata
 OUT=r.bin
 ST=rst
-rm -rf "$DATA" "$ST" r.bin* ts2.log
+rm -rf "$DATA" "$ST" r.bin* ts2.log 2>/dev/null || true
 mkdir -p "$DATA"
 
 SIZE=$((64*1024*1024))   # 64 MiB

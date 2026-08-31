@@ -7,7 +7,7 @@ BIN=../bin
 DATA=e2edata_ftp
 OUT=out_ftp.bin
 ST=statedir_ftp
-rm -rf "$DATA" "$ST" out_ftp.bin* ts_ftp.log
+rm -rf "$DATA" "$ST" out_ftp.bin* ts_ftp.log 2>/dev/null || true
 mkdir -p "$DATA"
 
 SIZE=$((64*1024*1024))  # 64 MiB
@@ -44,7 +44,7 @@ echo "out_sha256=$OUT_SHA"
 [ "$SRC_SHA" = "$OUT_SHA" ] && echo "MATCH: FTP 全量下载内容一致" || { echo "MISMATCH"; exit 1; }
 
 echo "=== [F5] FTP 中断续传：启动 1.5s 后强杀进程，重启续传 ==="
-rm -f "$OUT" "$OUT.part"; rm -rf "$ST"
+rm -f "$OUT" "$OUT.part" 2>/dev/null || true; rm -rf "$ST" 2>/dev/null || true
 "$BIN/porter.exe" "$FTP_URL" -o "$OUT" -state-dir "$ST" &
 DL_PID=$!
 sleep 1.5
@@ -73,9 +73,11 @@ echo "resumed_sha256=$RESUME_SHA"
 [ "$SRC_SHA" = "$RESUME_SHA" ] && echo "MATCH: FTP 续传后内容一致" || { echo "MISMATCH"; exit 1; }
 
 echo "=== [F6] 安全冒烟：非回环 FTP 拒绝 / 未知协议拒绝 ==="
+set +e  # 断言段：故意失败命令的退出码需要打印，不能触发 set -e
 "$BIN/porter.exe" ftp://10.0.0.1/x 2>&1; echo "non-loopback ftp exit=$? (期望1/2)"
 "$BIN/porter.exe" gopher://127.0.0.1/x 2>&1; echo "gopher exit=$? (期望2)"
 
+set -e  # 断言段结束，恢复严格模式
 kill $TS_PID 2>/dev/null || taskkill //F //PID $TS_PID 2>/dev/null || true
-rm -rf "$DATA" "$ST" out_ftp.bin*
+rm -rf "$DATA" "$ST" out_ftp.bin* 2>/dev/null || true
 echo "=== FTP E2E DONE ==="

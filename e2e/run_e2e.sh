@@ -6,7 +6,7 @@ BIN=../bin
 DATA=e2edata
 OUT=out.bin
 ST=statedir
-rm -rf "$DATA" "$ST" out.bin* ts.log
+rm -rf "$DATA" "$ST" out.bin* ts.log 2>/dev/null || true
 mkdir -p "$DATA"
 
 SIZE=$((64*1024*1024))  # 64 MiB
@@ -44,7 +44,7 @@ echo "out_sha256=$OUT_SHA"
 ls -la "$OUT"; [ ! -f "$OUT.part" ] && echo ".part 已清理"
 
 echo "=== [E5] 中断续传：启动 1.5s 后强杀进程，重启续传 ==="
-rm -f "$OUT" "$OUT.part"; rm -rf "$ST"
+rm -f "$OUT" "$OUT.part" 2>/dev/null || true; rm -rf "$ST" 2>/dev/null || true
 "$BIN/porter.exe" "$URL" -o "$OUT" -state-dir "$ST" &
 DL_PID=$!
 sleep 1.5
@@ -73,9 +73,11 @@ echo "resumed_sha256=$RESUME_SHA"
 [ "$SRC_SHA" = "$RESUME_SHA" ] && echo "MATCH: 续传后内容一致" || { echo "MISMATCH"; exit 1; }
 
 echo "=== [E6] CLI 参数/退出码冒烟 ==="
+set +e  # 断言段：故意失败命令需打印退出码，不能触发 set -e
 "$BIN/porter.exe" 2>&1; echo "no-args exit=$? (期望2)"
 "$BIN/porter.exe" "$URL" -mode bogus 2>&1 | head -2; echo "---"
 "$BIN/porter.exe" http://10.0.0.1/x 2>&1; echo "non-loopback exit=$? (期望1/2)"
 
+set -e  # 断言段结束，恢复严格模式
 kill $TS_PID 2>/dev/null || taskkill //F //PID $TS_PID 2>/dev/null || true
 echo "=== E2E DONE ==="

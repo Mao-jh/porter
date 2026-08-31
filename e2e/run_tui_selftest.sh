@@ -5,7 +5,7 @@ cd "$(dirname "$0")"
 BIN=../tui
 TS=../bin
 DATA=tdata
-rm -rf "$DATA" outdir tst1 tst2 tui.log
+rm -rf "$DATA" outdir tst1 tst2 tui.log 2>/dev/null || true
 mkdir -p "$DATA" outdir
 
 SIZE=$((48*1024*1024))
@@ -34,7 +34,7 @@ print(h.hexdigest())")
 [ "$SRC_SHA" = "$OUT_SHA" ] && echo "MATCH: sha256 一致" || { echo "MISMATCH"; kill $TS_PID 2>/dev/null; exit 1; }
 
 echo "=== [T2] 中断续传：限速下 1.5s 强杀 TUI 进程 → 重启 selftest 续传 ==="
-rm -rf tst2; mkdir -p outdir2
+rm -rf tst2 2>/dev/null || true; mkdir -p outdir2
 "$BIN/porter-tui.exe" -selftest -url "$URL" -out outdir2 -state-dir tst2 -verify sha256 &
 DPID=$!
 sleep 1.5

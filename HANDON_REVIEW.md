@@ -263,6 +263,15 @@ vet/test 干净。
    retest 9/9、T6 依赖仅本 module、T7 合规通过。
 2. `find -probe` 对非回环链接默认 H-3 拒绝，可考虑 `-allow-remote` 开关
    （同第一部分建议 2）。
-3. 附注：`run_tests.sh` 的 `xxx_exit=$?` 均取在管道 `| tee` 之后，测的是 tee 的
-   退出码（恒 0，无断言意义）——各脚本自身的 `PASS=/FAIL=` 汇总才是有效断言，
-   建议后续改为 `PIPESTATUS` 取真实退出码。
+3. ~~附注：`run_tests.sh` 的 `xxx_exit=$?` 均取在管道 `| tee` 之后，测的是 tee 的
+   退出码（恒 0，无断言意义）~~ **已修复**：全部 19 处改为 `${PIPESTATUS[0]}`
+   取管道左侧命令的真实退出码（含 T4b/T4c 子 shell 内 6 处）；`bash -n` 通过、
+   机制验证（false→1/true→0）、`quick` 与完整门禁复跑均正常。
+   **该修复立即暴露 3 个被恒 0 掩盖的历史脚本 bug（已全部修复）**：
+   - `e2e/run_e2e.sh` [E6]、`e2e/run_ftp.sh` [F6]：断言段（`porter` 无参数/非回环
+     URL 等故意失败命令）在 `set -e` 下直接杀死脚本——任何环境必挂，仅因 tee 恒 0
+     一直"假装通过"。修复：断言段包 `set +e`/`set -e`。
+   - `e2e/run_tui_selftest.sh` 等 6 个 e2e 脚本：清理 `rm -rf` 删工作区测试数据，
+     在沙箱批量删除守卫下失败触发 `set -e`。修复：全部清理 rm 加 `|| true` 容错。
+   - 修复后沙箱外独立验证 3 脚本 EXIT=0；沙箱内完整门禁 13 段退出码**全部真实为 0**
+     （e2e/ftp/tui 从 1 → 0），MATCH 断言全命中，demo 12/12、discover 16/16、retest 9/9。

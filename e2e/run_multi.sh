@@ -4,7 +4,7 @@ set -e
 cd "$(dirname "$0")"
 BIN=../bin
 DATA=mdata
-rm -rf "$DATA" outdir ts3.log
+rm -rf "$DATA" outdir ts3.log 2>/dev/null || true
 mkdir -p "$DATA" outdir
 
 # 预生成三个确定性内容文件（与 testserver.PatternFill 公式一致）
