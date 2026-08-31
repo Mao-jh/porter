@@ -37,10 +37,11 @@
   `-load-cookies` Netscape cookie.txt（curl/wget/aria2 通用格式，按域匹配注入）
 - **自动化友好**：`-i urls.txt` 批量任务 + `-j N` 并发上限（对标 aria2 -i/-j）；
   `-summary` 每秒进度摘要；`porter tasks` 任务列表；无 `-o` 时按
-  Content-Disposition 自动命名
+  Content-Disposition 自动命名；`-o -` 流式输出到 stdout（对标 curl `-o -`）
+- **早期失败**：下载前磁盘空间预检（跨平台；续传按 `.part` 折算；查询失败降级警告）
 - **故障自愈**：429/5xx/断连/超时指数退避（1s→30s 饱和，±20% 抖动）；尊重 `Retry-After`；
   其余 4xx 不重试
-- **MCP 插件**：4 个工具（start/status/cancel/list），任何 MCP 客户端即插即用
+- **MCP 插件**：5 个工具（start/status/cancel/list/probe），任何 MCP 客户端即插即用
 - **合规内建**：零遥测零上报；默认 UA 自标识；跨主机凭据剥离；HLS 直播流与 DRM 方法拒绝；
   [SECURITY.md](SECURITY.md) / [COMPLIANCE.md](COMPLIANCE.md) 声明边界，
   `scripts/compliance.sh` 与 CI 持续断言
@@ -75,8 +76,8 @@ go install github.com/Mao-jh/porter/mcp/cmd/porter-mcp@latest
 }
 ```
 
-之后 AI 客户端即拥有 4 个工具：`download_start`（异步启动）→ `download_status`（轮询进度）
-→ `download_cancel` → `list_tasks`（含历史恢复）。
+之后 AI 客户端即拥有 5 个工具：`download_start`（异步启动）→ `download_status`（轮询进度）
+→ `download_cancel` → `list_tasks`（含历史恢复）→ `download_probe`（探测 size/ranged/name）。
 MCP 服务端同样支持 `-proxy` / `-load-cookies`（见下方命令行参数；`-allow-remote` 仍为
 直连公网目标的产品开关，代理为另一条受控出站通道）。
 
@@ -94,6 +95,7 @@ porter tasks                                         # 列出持久化任务与�
 porter rm "out.bin" / porter clean                   # 删除任务 / 清理完成记录
 porter probe http://127.0.0.1:8080/file/big.bin      # 只探测不下载（wget --spider 对标）
 porter retry                                         # 续传重跑未完成任务（done 跳过）
+porter url -o - | sha256sum                          # 流式输出到 stdout（curl -o - 对标）
 ```
 
 ### TUI

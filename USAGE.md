@@ -12,6 +12,9 @@ GOFLAGS=-mod=readonly GOPROXY=off CGO_ENABLED=0 \
 # 指定输出路径
 ./porter https://127.0.0.1/x.zip -o x.zip
 
+# 流式输出到 stdout（管道友好，对标 curl -o -；单连接顺序，无续传/校验）
+./porter http://127.0.0.1/file.big -o - | sha256sum
+
 # 多 URL 并发下载（-o 为输出目录；文件名自动取自 URL 并去重）
 ./porter http://127.0.0.1/a.bin http://127.0.0.1/b.bin -o outdir/
 
@@ -76,7 +79,7 @@ GOFLAGS=-mod=readonly GOPROXY=off CGO_ENABLED=0 \
 | `tasks` 子命令 | — | `porter tasks [-state-dir DIR]`：按更新时间倒序列出持久化任务（含断点续传中间态） |
 | `retry` 子命令 | — | `porter retry [-state-dir DIR] [-limit bps] [-proxy URL] [-load-cookies file] [-H "K: V"] [-verify algo]`：续传重跑 `status!=done` 的任务（串行、错误聚合；done 跳过） |
 | `probe` 子命令 | — | `porter probe <url>... [-proxy URL] [-load-cookies file] [-H "K: V"]`：只探测不下载，输出 `url=/size=/ranged=/name=` |
-| `-o` | 自动 | 单 URL=输出文件路径；多 URL=输出目录（文件名取自 `out=` 行内命名 > URL 推导，同名自动 -2/-3 后缀）；单 URL 省略时自动命名：服务端 `Content-Disposition` > URL 尾段 |
+| `-o` | 自动 | 单 URL=输出文件路径；`-o -`=流式输出到 stdout（单连接顺序、无续传/校验，对标 curl `-o -`）；多 URL=输出目录（文件名取自 `out=` 行内命名 > URL 推导，同名自动 -2/-3 后缀）；单 URL 省略时自动命名：服务端 `Content-Disposition` > URL 尾段 |
 | `-n` | 0（自动） | 每任务分片数；自动决策 `min(max(⌈size/8MiB⌉,3),6)`；显式 1..16 |
 | `-limit` | 0（不限） | 全局下载限速（字节/秒），跨任务跨分片共享 |
 | `-H` | 无 | 透传请求头 `"Key: Value"`，可重复 |
@@ -109,6 +112,10 @@ go run ./cmd/testserver -dir ./e2edata -name big.bin -size 67108864 -limit 41943
   跨主机重定向时 Cookie/Authorization 仍按既有策略剥离。
 - **自动文件名**：仅单 URL 且未显式 `-o` 时生效（Metalink 元数据名优先于 Content-Disposition）；
   多 URL 模式保持 URL 推导 + 预去重，避免任务间同名冲突。
+- **磁盘空间预检**：已知大小的下载开始前检查目标卷剩余空间，不足立即失败（早期失败，
+  避免下载到一半因磁盘满中止）；续传按 `.part` 已有量折算；查询失败仅警告不阻断。
+- **流式模式 `-o -`**：单 URL 强制单连接顺序输出 stdout（不可寻址 → 无分片并行/
+  断点续传/完成后校验，与 curl `-o -` 同类取舍）；与 `-n` 分片或多 URL 同时使用会报错。
 - **断点续传（字节级）**：异常退出（kill -9/崩溃/断电）后同参数重启，自动从各分片已写前缀继续；
   崩溃最多损失最近 500ms 的进度。URL 或文件大小变化、或上次已完成（done）时改为全新下载。
 - **故障重试**：429/5xx/断连/超时按指数退避（1s→30s 饱和，±20% 抖动）自动重试；

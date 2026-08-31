@@ -144,6 +144,20 @@ func RunRetry(ctx, opt *Options) error            // 串行续传重跑 store �
 - **MCP download_probe**：第 5 个工具，`cli.ProbeURL` 语义同源（-proxy/-load-cookies/
   AllowRemote 透传），输出 size_bytes/ranged/name。
 
+**第 18 轮新增契约（磁盘预检 / stdout 流式）**：
+```go
+func diskFreeBytes(path string) (int64, error)                 // build tags 平台实现（Windows: kernel32!GetDiskFreeSpaceExW via syscall.NewLazyDLL；其余: syscall.Statfs，零依赖）
+func preflightDisk(output string, size int64) error            // 下载前空间预检（size<=0 跳过；.part 已有量折算；查询失败降级警告）
+func runStream(ctx, dlFetch network.Fetcher, urlStr string) error // -o -：单连接顺序写 stdout
+func validateStreamOutput(opt *Options) error                  // -o - 约束：单 URL、无 -n 分片
+```
+- **磁盘预检时机**：`runOne` 中 `probe → 计划构造 → preflightDisk → OpenSparse`；已知大小
+  且非流式时执行；不足直接失败（早期失败语义，对标 IDM/wget）。
+- **流式模式语义**：`-o -` 在内容形态包装（Metalink/HLS）之后、探测之前短路——
+  单连接顺序流，跳过 .part/续传/校验/持久化；Metalink failover、HLS 选流/解密不受影响。
+- 跨平台：`diskfree_windows.go` / `diskfree_unix.go`（`//go:build` 标记），
+  Windows 经 `syscall.NewLazyDLL` 直调 kernel32（零第三方依赖，B-1 不变）。
+
 ### 2.4 persist — 持久化
 ```go
 func Open(dir string) (*Store, error)

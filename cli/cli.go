@@ -253,6 +253,10 @@ func Run(ctx context.Context, opt *Options) error {
 // 每个任务内部仍是完整的分片并行引擎（工作窃取/字节级续传/覆盖守卫/校验）。
 // 返回聚合错误（errors.Join），单个任务失败不影响其余任务。
 func RunMulti(ctx context.Context, opt *Options) error {
+	// R18：-o - 流式模式的参数约束（单 URL、无分片）
+	if err := validateStreamOutput(opt); err != nil {
+		return err
+	}
 	store, err := persist.Open(opt.StateDir)
 	if err != nil {
 		return fmt.Errorf("持久化打开失败: %w", err)
@@ -474,8 +478,8 @@ func runOne(ctx context.Context, fetch network.Fetcher, tr *network.Transport, o
 		if err != nil {
 			return err
 		}
-		// 输出名改用 <file name> 属性——但显式 -o（单 URL）优先，尊重用户指定
-		if !explicitOut {
+		// 输出名改用 <file name> 属性——但显式 -o（单 URL）与流式模式（-o -）优先
+		if !explicitOut && output != "-" {
 			if n := sanitizeFilename(ml.Name); n != "" {
 				output = filepath.Join(filepath.Dir(output), n)
 				named = true
@@ -514,6 +518,11 @@ func runOne(ctx context.Context, fetch network.Fetcher, tr *network.Transport, o
 		}
 	}
 
+	// R18 流式模式（-o -）：单连接顺序写 stdout，绕过整个落盘引擎
+	if output == "-" {
+		return runStream(ctx, dlFetch, urlStr)
+	}
+
 	// 探测资源大小与 Range 支持（决定并行分片 vs 流式单连接）
 	size, ranged, err := dlFetch.Probe(ctx, urlStr)
 	if err != nil {
@@ -547,6 +556,11 @@ func runOne(ctx context.Context, fetch network.Fetcher, tr *network.Transport, o
 	}
 	if !resume {
 		_ = os.Remove(output + ".part") // 全新任务：清理上次残留的临时文件
+	}
+
+	// R18：下载前磁盘空间预检（已知大小、非流式；.part 已有量折算；查询失败降级警告）
+	if err := preflightDisk(output, size); err != nil {
+		return err
 	}
 
 	// 稀疏文件：续传时保留 .part 已有内容（OpenSparse 不截断）

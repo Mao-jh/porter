@@ -373,3 +373,21 @@ github.com/Mao-jh/porter           ← 零第三方依赖保持（第 13 轮未�
 - `retry` 串行执行（确定性）；单个失败聚合报错，不影响其余任务。
 - 续传守卫仅校验 `.part` 尺寸；不校验分片级内容（引擎 Range 强制 + 覆盖守卫已有三层防线）。
 - MCP `download_probe` 复用 CLI 语义：默认 H-3 回环；`-proxy` 时目标域解析交给代理。
+
+## 16. 第 18 轮：磁盘空间预检 / -o - stdout 流式（真实执行）
+
+> 门禁：`./run_tests.sh`（vet / 单测 / -race / 四套进程级 e2e / 合规检查 + TUI/MCP 模块，
+> 原始输出见 `test_raw.log`）。
+
+### 16.1 新增能力与测试证据
+| 能力 | 实现 | 测试（真实通过） |
+|---|---|---|
+| 磁盘空间预检 | `cli.preflightDisk`（已知大小且非流式时执行；`.part` 已有量折算；不足快速失败）；`diskfree_windows.go`（kernel32!GetDiskFreeSpaceExW 经 stdlib `syscall.NewLazyDLL` 直调，零第三方依赖）/ `diskfree_unix.go`（`syscall.Statfs`，Bavail×Bsize） | `TestDiskFreeBytes`（可用>0）、`TestPreflightDisk_Enough`、`TestPreflightDisk_NotEnough`（MaxInt64 → 报"磁盘空间不足"）、`TestPreflightDisk_PartDeduction`（.part 折算）、`TestPreflightDisk_SkipZero` |
+| `-o -` 流式输出 | `cli.runStream`（单连接顺序写 stdout，Metalink/HLS 内容形态包装后短路）；`validateStreamOutput`（单 URL、无 -n 约束） | `TestRun_StreamStdout`（stdout 3MiB sha256 与源一致）、`TestRun_StreamHLS`（HLS 虚拟映射流式 sha256 一致）、`TestValidateStreamOutput`（多 URL/-n 报错） |
+| 跨平台编译 | `//go:build` 双实现 | Windows 门禁全过；`GOOS=linux/darwin CGO_ENABLED=0 go build ./cli/` 交叉编译通过 |
+
+### 16.2 边界声明（诚实）
+- 预检仅覆盖已知大小场景；流式（`-o -`）与未知大小（size=0）跳过；查询失败（权限/跨平台）
+  降级为 stderr 警告，不阻断下载。
+- `-o -` 强制单连接顺序流：无分片并行、无断点续传、无完成后校验（stdout 不可寻址，
+  与 curl `-o -` 同类取舍）；`-n` 分片与多 URL 同时使用报错。
