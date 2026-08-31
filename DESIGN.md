@@ -268,3 +268,12 @@ cli.Run
   （对标 curl -I；支持 -proxy/-load-cookies/-H）。
 - TUI：`Task.ETA`（剩余秒）= (Size-Done)/Speed；view 追加 `ETA Xs/Xm Ys/Xh Ym`
   （本地复制 `formatETA`，tui 独立 module 不跨导出）；防溢出钳制 2^62。
+
+**第 22 轮新增契约（实测驱动修复）**：
+- `summaryTracker` 渲染分两档：周期性帧（`render`，`showDone=false`）仅输出
+  `status!=done` 的活跃任务，避免已完成历史每帧刷屏；终态快照（`renderAll`，
+  `showDone=true`）输出全部任务。速率/ETA 跟踪对全部任务保持更新（不因跳过输出
+  而缺帧）。`renderAt(w, states, now, showDone)` 测试签名同步扩展。
+- 输出文件打开失败时检测父目录缺失：`cli.runOne` 报 `输出目录不存在 %q（请先创建…）`；
+  `preflightDisk` 查询失败警告同步提示目录缺失——与 curl 语义一致（不自动建目录），
+  但报错人读友好。

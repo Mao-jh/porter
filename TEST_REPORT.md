@@ -440,3 +440,20 @@ github.com/Mao-jh/porter           ← 零第三方依赖保持（第 13 轮未�
 - `meta` 与 `probe` 同源（HEAD→GET 0-0 回退路径）；`meta` 不做 body 下载。
 - TUI ETA 基于 500ms tick 的瞬时速率差分（未做 EMA，刷新频率高抖动可接受）；
   已知大小且速率>0 时才有 ETA，否则不显示。
+
+## 20. 第 22 轮：实测驱动修复（summary 去刷屏 / 目录缺失报错 / MCP 参数文档）
+
+> 本轮由真实试用驱动（bin/ 产物 + testserver 端到端实测发现三类可用性问题），
+> 修复后门禁 `./run_tests.sh` 全量复跑通过（vet / 单测 / -race / 六套 e2e / 合规）。
+
+### 20.1 修复与测试证据
+| 修复项 | 实现 | 测试（真实通过） |
+|---|---|---|
+| `-summary` 周期性帧刷屏 | `summaryTracker.renderAt` 增 `showDone` 参数：周期性帧（`render`）跳过 `status=done` 任务，终态快照（`renderAll`）输出全部；EMA/速率跟踪对全部任务保持更新 | 新增 `TestSummaryTracker_SkipDoneOnTick`（周期性帧无 done 任务、终态帧含全部）；既有 `TestPrintSummary`/`TestSummaryTracker_SpeedAndETA`/`TestSummaryTracker_EMADecay` 全部保持通过（签名加参） |
+| 输出目录缺失报错不友好 | `runOne` OpenSparse 失败时检测父目录：缺失则报 `输出目录不存在 %q（请先创建…）`；`preflightDisk` 查询失败警告同步提示 `（目录不存在，打开输出文件将失败）` | 实测：`-o newdir/x.bin`（newdir 不存在）→ 明确报错；目录存在 → 正常下载 sha256 一致 |
+| README 缺 MCP 工具参数 | README 增 5 工具参数表（`download_start`: url/output_dir/limit_bps；`download_status`/`download_cancel`: task_id；`download_probe`: url）+ 示例调用 | MCP 冒烟脚本逐条 JSON-RPC 实测：initialize → tools/list(5) → download_start → sha256 校验一致 |
+
+### 20.2 边界声明（诚实）
+- MCP stdio 一次性管道输入（多行 JSON-RPC 连发 + 立即 EOF）只回 initialize 即退出：
+  根因在 go-sdk v1.7.0 的 jsonrpc2 异步分发（EOF 触发连接关闭、取消在途请求），
+  真实 MCP 客户端（保持 stdin 打开、逐条交互）不受影响，未做规避。
