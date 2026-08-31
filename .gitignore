@@ -9,6 +9,7 @@ bin/
 .downloader-mcp*/
 e2e/mcpdata/
 e2e/mcpout/
+e2e/mdata/
 e2e/outdir*/
 e2e/out.bin*
 e2e/r.bin*
@@ -47,3 +48,4 @@ e2e/porter-meta4-out.bin*
 e2e/*_sha.txt
 e2e/*.log
 full_gate.log
+.workbuddy/

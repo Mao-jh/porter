@@ -64,6 +64,7 @@ func New(cfg Config) (*Server, error) {
 	mux.HandleFunc("/file/", s.handleFile)
 	mux.HandleFunc("/fault", s.handleFault)
 	mux.HandleFunc("/echo", s.handleEcho)
+	mux.HandleFunc("/cd/", s.handleCD)
 	mux.HandleFunc("/redirect", s.handleRedirect)
 	s.registerProtocolRoutes(mux) // HLS/Metalink 端点（第 13 轮）
 	s.mux = mux
@@ -264,6 +265,20 @@ func (s *Server) handleEcho(w http.ResponseWriter, r *http.Request) {
 			io.WriteString(w, k+"="+v+"\n")
 		}
 	}
+}
+
+// handleCD 返回 Content-Disposition 附件头的端点（第 14 轮，自动命名测试用）。
+// GET /cd/<name>（URL 路径携带文件名，含 percent-encoding）；
+// ?raw=<header-value> 时原样输出该头（测试 filename* 等特殊形态）。
+func (s *Server) handleCD(w http.ResponseWriter, r *http.Request) {
+	if raw := r.URL.Query().Get("raw"); raw != "" {
+		w.Header().Set("Content-Disposition", raw)
+	} else {
+		name := strings.TrimPrefix(r.URL.Path, "/cd/")
+		w.Header().Set("Content-Disposition", `attachment; filename="`+name+`"`)
+	}
+	w.Header().Set("Content-Length", "16")
+	io.WriteString(w, "cdtest-content16")
 }
 
 // handleFault 按 ?type= 参数注入故障：reset/timeout/429/5xx。

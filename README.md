@@ -33,6 +33,11 @@
 - **三层完整性防线**：Range 强制 + 200 全量拒绝 + 响应体限长校验 → 分片覆盖守卫 →
   流式 sha256/sha1/md5 校验；Metalink 元数据哈希直接做**期望值比对**，不符删产物
 - **全局限速**：`-limit` 平滑令牌配额，跨任务跨分片严格共享
+- **代理与凭据**：`-proxy` HTTP(S)/SOCKS5 代理出口（显式配置即显式允许出站）；
+  `-load-cookies` Netscape cookie.txt（curl/wget/aria2 通用格式，按域匹配注入）
+- **自动化友好**：`-i urls.txt` 批量任务 + `-j N` 并发上限（对标 aria2 -i/-j）；
+  `-summary` 每秒进度摘要；`porter tasks` 任务列表；无 `-o` 时按
+  Content-Disposition 自动命名
 - **故障自愈**：429/5xx/断连/超时指数退避（1s→30s 饱和，±20% 抖动）；尊重 `Retry-After`；
   其余 4xx 不重试
 - **MCP 插件**：4 个工具（start/status/cancel/list），任何 MCP 客户端即插即用
@@ -79,7 +84,11 @@ go install github.com/Mao-jh/porter/mcp/cmd/porter-mcp@latest
 ```bash
 porter http://127.0.0.1:8080/file/big.bin            # 自动分片 + sha256 校验
 porter url1 url2 -o outdir/ -limit 10485760          # 多任务 + 10MiB/s 全局限速
+porter -i urls.txt -j 4 -summary                     # 批量任务 + 并发上限 + 进度摘要
 porter url -H "Cookie: session=abc" -n 16            # 透传头 + 16 分片
+porter url -proxy socks5://127.0.0.1:1080            # 代理出口（http/https/socks5）
+porter url -load-cookies cookies.txt                 # Netscape cookie.txt 按域注入
+porter tasks                                         # 列出持久化任务与历史
 ```
 
 ### TUI
@@ -132,6 +141,8 @@ testserver/         环回测试服务端（Range/故障注入/限速/确定性�
 | 分段 | 动态分段（闭源） | chunked 静态 | 计划期分片 + 运行时尾段窃取 |
 | 连接上限 | 32 | `-x` 16 | 自动 6 / `-n` 16 |
 | 续传粒度 | — | 控制文件 | **字节级**（500ms 持久化，强杀实测） |
+| 代理 / Cookie / Header | ✅ | ✅ `--all-proxy`/`--load-cookies`/`--header` | ✅ `-proxy`(HTTP/SOCKS5) / `-load-cookies` / `-H` |
+| 批量任务 / 并发上限 | ✅ | ✅ `-i` / `-j` | ✅ `-i urls.txt` / `-j N` |
 | 协议 | HTTP/FTP | HTTP/FTP/SFTP/BT/Metalink | HTTP(S)/FTP(S)/**HLS**/Metalink4/file（SFTP/BT 受零依赖约束，见 BENCHMARK 取舍） |
 | AI 插件 | ✗ | ✗ | ✅ MCP（4 工具） |
 

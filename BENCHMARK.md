@@ -41,16 +41,16 @@
 5. **零依赖静态产物**：Windows PE 与 Linux ELF（`CGO_ENABLED=0`），供应链面最小。
 
 ### 3.2 差距清单（诚实，按价值排序）
-| # | 差距 | 同类参照 | 状态（第 6 轮更新） |
+| # | 差距 | 同类参照 | 状态（第 14 轮更新） |
 |---|---|---|---|
-| 1 | 仅回环，无法用于真实网络 | 全部同类 | ⛔ 交付约束保留；解除需产品决策（安全开关 + 灰度） |
+| 1 | 仅回环，无法用于真实网络 | 全部同类 | ◐ 交付约束保留；**第 14 轮：`-proxy`（http/https/socks5）提供受控出站通道**——显式配置代理即视为显式出站同意（产品开关语义），直连公网仍拒绝 |
 | 2 | 连接上限 6 vs IDM 32 / aria2 16 | IDM/aria2 | ✅ 显式 `-n` 放宽至 **16**（对齐 aria2 -x=16）；自动决策仍封顶 6（保内存红线） |
 | 3 | 无客户端限速 | 全部同类 | ✅ `-limit` 全局限速（平滑令牌配额，跨任务跨分片共享；80MiB@12MiB/s 实测 7s ≥ 理论 6.7s） |
-| 4 | 无代理/Cookie/Header/认证 | aria2 最全 | ◐ `-H` 透传头已实现（Cookie/Authorization 可用）；代理需决策（与 H-3 交互） |
-| 5 | 多任务队列未接线到 CLI | aria2 `-j`、IDM 4 任务 | ✅ 多 URL 队列已接线：并发任务数由 R-3 模式决定（default ⌈cpus×0.6⌉ / max cpus） |
-| 6 | 协议面窄（无 SFTP/BT/磁力） | aria2 六协议 | ◐ **第 13 轮扩展 FTP(S)/HLS/Metalink4/file**（HLS 为主列表选流+AES-128，复用分片引擎；Metalink 含候选 failover+哈希期望值校验）。SFTP 需 x/crypto、BT 需完整协议栈——零依赖（B-1/H-4）约束下的诚实取舍 |
-| 7 | 无浏览器集成/GUI | IDM/FDM/AB | ✅ **TUI 已实现**（Bubble Tea，`tui/` module + `downloader-tui.exe`；AI 第一用户准则下实测 Private 13.3MB 为全候选最优）。GUI 仍无（选型证据 [gui/SPIKE_LOG.md](gui/SPIKE_LOG.md)） |
-| 8 | HTTP/2 已随 net/http 自动启用但未调优、HTTP/3 未支持 | — | ⛔ 长尾优化项 |
+| 4 | 无代理/Cookie/Header/认证 | aria2 最全 | ✅ **第 14 轮补齐**：`-proxy`（HTTP/SOCKS5）+ `-load-cookies`（Netscape cookie.txt，按域匹配，与 `-H` 透传共存）+ 既有 `-H` 透传头。剩余：NTLM/摘要认证（aria2 `--http-auth-*`，诚实取舍：标准库无现成实现且使用面窄） |
+| 5 | 多任务队列未接线到 CLI | aria2 `-j`、IDM 4 任务 | ✅ 多 URL 队列已接线 + **第 14 轮 `-i urls.txt` / `-j N`**（对齐 aria2 输入文件与并发上限语义，-j 只下调不上调） |
+| 6 | 协议面窄（无 SFTP/BT/磁力） | aria2 六协议 | ◐ 第 13 轮扩展 FTP(S)/HLS/Metalink4/file。SFTP 需 x/crypto、BT 需完整协议栈——零依赖（B-1/H-4）约束下的诚实取舍 |
+| 7 | 无浏览器集成/GUI | IDM/FDM/AB | ✅ TUI 已实现（Bubble Tea）。**第 14 轮 CLI 体验补齐**：`-summary` 进度摘要（每秒一行）+ `porter tasks` 任务列表子命令 + Content-Disposition 自动文件名（单 URL，Metalink 名优先）。GUI 仍无（选型证据 [gui/SPIKE_LOG.md](gui/SPIKE_LOG.md)） |
+| 8 | HTTP/2 已随 net/http 自动启用但未调优、HTTP/3 未支持 | — | ⛔ 长尾优化项（HTTP/3 需 quic-go 第三方依赖，B-1 拒绝） |
 
 ### 3.3 性能声明边界（R-2）
 - ✅ 可声明：机制层对标（动态分段思想同类、字节级续传、三层校验），均有测试证据。

@@ -15,6 +15,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	gio "io"
 	"net/url"
 	"os"
 	"path"
@@ -45,7 +46,15 @@ type Options struct {
 	StateDir string
 	Limit    int64             // 全局下载限速（字节/秒，0=不限），所有连接共享
 	Headers  map[string]string // 每请求透传头（-H，Cookie/Authorization 等）
+
+	Proxy      string // 代理出口（http/https/socks5，空=直连；第 14 轮）
+	Jobs       int    // 并发任务数上限（0=按 mode 自动；第 14 轮，对标 aria2 -j）
+	CookieFile string // Netscape cookie.txt 路径（空=不加载；第 14 轮）
+	Summary    bool   // 周期性进度摘要输出到 stderr（第 14 轮）
 }
+
+// boolFlags 布尔标志集合：预扫描阶段不把下一个 token 消费为标志值。
+var boolFlags = map[string]bool{"summary": true}
 
 // headerList 收集可重复的 -H "Key: Value" 标志。
 type headerList []string
@@ -90,8 +99,9 @@ func Parse(args []string) (*Options, error) {
 		a := args[i]
 		if len(a) > 1 && a[0] == '-' {
 			flagArgs = append(flagArgs, a)
-			// 本工具全部为带值标志：若下一个 token 不以 - 开头则消费为标志值
-			if i+1 < len(args) && !(len(args[i+1]) > 1 && args[i+1][0] == '-') {
+			// 除布尔标志（boolFlags）外全部带值：下一个 token 不以 - 开头则消费为标志值
+			name := strings.TrimLeft(a, "-")
+			if !boolFlags[name] && i+1 < len(args) && !(len(args[i+1]) > 1 && args[i+1][0] == '-') {
 				flagArgs = append(flagArgs, args[i+1])
 				i++
 			}
@@ -109,14 +119,19 @@ func Parse(args []string) (*Options, error) {
 		verify   = fs.String("verify", "sha256", "校验算法: sha256|sha1|md5|none")
 		stateDir = fs.String("state-dir", ".downloader", "任务状态持久化目录")
 		limit    = fs.Int64("limit", 0, "全局下载限速 字节/秒（0=不限，所有任务/分片共享）")
+		proxy    = fs.String("proxy", "", "代理出口（http://host:port 或 socks5://host:port；设置即视为允许出站）")
+		urlFile  = fs.String("i", "", "URL 列表文件（每行一个 URL，空行与 # 注释忽略；对标 aria2 -i）")
+		jobs     = fs.Int("j", 0, "并发任务数上限（0=按 -mode 自动决定；对标 aria2 -j）")
+		ckFile   = fs.String("load-cookies", "", "Netscape cookie.txt 文件路径（按域匹配注入 Cookie 头）")
+		summary  = fs.Bool("summary", false, "每秒输出一次任务进度摘要到 stderr")
 		hdrs     headerList
 	)
 	fs.Var(&hdrs, "H", "透传请求头 \"Key: Value\"（可重复，如 -H \"Cookie: a=b\"）")
 	if err := fs.Parse(args); err != nil {
 		return nil, err
 	}
-	if fs.NArg() == 0 {
-		return nil, errors.New("用法: downloader <url> [url2 ...] [-o out] [-n shards] [-limit bps] [-H \"K: V\"] [-mode default|max] [-verify sha256]")
+	if fs.NArg() == 0 && *urlFile == "" {
+		return nil, errors.New("用法: downloader <url|-> [url2 ...] [-i urls.txt] [-o out] [-n shards] [-j jobs] [-limit bps] [-proxy URL] [-load-cookies file] [-summary] [-H \"K: V\"] [-mode default|max] [-verify sha256]")
 	}
 	urls := make([]string, 0, fs.NArg())
 	for i := 0; i < fs.NArg(); i++ {
@@ -125,6 +140,20 @@ func Parse(args []string) (*Options, error) {
 			return nil, fmt.Errorf("不支持的 URL 协议: %s（仅 http/https/ftp/ftps/file）", u)
 		}
 		urls = append(urls, u)
+	}
+	// -i URL 列表文件：与位置参数合并（去重保序）
+	if *urlFile != "" {
+		fromFile, err := readURLFile(*urlFile)
+		if err != nil {
+			return nil, err
+		}
+		urls = append(urls, fromFile...)
+	}
+	if len(urls) == 0 {
+		return nil, errors.New("未提供任何 URL（位置参数或 -i 文件）")
+	}
+	if *jobs < 0 {
+		return nil, fmt.Errorf("非法 -j: %d（应为 ≥0）", *jobs)
 	}
 	hm, err := headerMap(hdrs)
 	if err != nil {
@@ -153,7 +182,32 @@ func Parse(args []string) (*Options, error) {
 		StateDir: *stateDir,
 		Limit:    *limit,
 		Headers:  hm,
+
+		Proxy:      *proxy,
+		Jobs:       *jobs,
+		CookieFile: *ckFile,
+		Summary:    *summary,
 	}, nil
+}
+
+// readURLFile 读取 -i URL 列表文件：每行一个 URL，空行与 # 开头注释忽略。
+func readURLFile(path string) ([]string, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("读取 URL 列表失败: %w", err)
+	}
+	var urls []string
+	for _, line := range strings.Split(string(data), "\n") {
+		line = strings.TrimSpace(strings.TrimSuffix(line, "\r"))
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		if !startsWithAny(line, "http://", "https://", "ftp://", "ftps://", "file://") {
+			return nil, fmt.Errorf("URL 列表第 %d 行协议不支持: %s（仅 http/https/ftp/ftps/file）", len(urls)+1, line)
+		}
+		urls = append(urls, line)
+	}
+	return urls, nil
 }
 
 // Run 执行下载：单个 URL 直接下载；多个 URL 经调度器并发排队
@@ -185,6 +239,26 @@ func RunMulti(ctx context.Context, opt *Options) error {
 	tr.SetGlobalLimit(opt.Limit)
 	if len(opt.Headers) > 0 {
 		tr.SetHeaders(opt.Headers)
+	}
+	// 代理出口（第 14 轮）：设置即视为显式允许出站（network 层自动置 allowRemote）
+	if opt.Proxy != "" {
+		if err := tr.SetProxy(opt.Proxy); err != nil {
+			return fmt.Errorf("代理配置失败: %w", err)
+		}
+		fmt.Fprintf(os.Stderr, "[proxy] 出口 %s（远程目标已随代理显式放行）\n", opt.Proxy)
+	}
+	// Netscape cookie 文件（第 14 轮）：按域匹配注入 Cookie 头
+	if opt.CookieFile != "" {
+		data, err := os.ReadFile(opt.CookieFile)
+		if err != nil {
+			return fmt.Errorf("读取 cookie 文件失败: %w", err)
+		}
+		cs, err := network.ParseNetscapeCookies(data)
+		if err != nil {
+			return fmt.Errorf("解析 cookie 文件失败: %w", err)
+		}
+		tr.SetCookies(cs)
+		fmt.Fprintf(os.Stderr, "[cookies] 已加载 %d 条（按域匹配）\n", len(cs))
 	}
 	// 协议分发：http(s) → tr，ftp(s) → FTP 传输层（共享同一限速配额，H-3 同边界）。
 	fetch := network.NewMux(tr, false)
@@ -218,6 +292,30 @@ func RunMulti(ctx context.Context, opt *Options) error {
 	if consumers > len(opt.URLs) {
 		consumers = len(opt.URLs)
 	}
+	// -j 并发任务数上限（第 14 轮）：只下调不上调（上调越过 R-3 模式预算）
+	if opt.Jobs > 0 && opt.Jobs < consumers {
+		consumers = opt.Jobs
+	}
+	// -summary 周期进度摘要（第 14 轮）：读 store 快照，单行/任务，不刷屏
+	stopSummary := make(chan struct{})
+	summaryExited := make(chan struct{})
+	if opt.Summary {
+		go func() {
+			defer close(summaryExited)
+			tk := time.NewTicker(time.Second)
+			defer tk.Stop()
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case <-stopSummary:
+					return
+				case <-tk.C:
+					printSummary(os.Stderr, store.All())
+				}
+			}
+		}()
+	}
 	var wg sync.WaitGroup
 	for i := 0; i < consumers; i++ {
 		wg.Add(1)
@@ -243,6 +341,11 @@ func RunMulti(ctx context.Context, opt *Options) error {
 		}()
 	}
 	wg.Wait()
+	if opt.Summary {
+		close(stopSummary)
+		<-summaryExited
+		printSummary(os.Stderr, store.All()) // 终态快照
+	}
 	close(results)
 
 	var errs []error
@@ -344,6 +447,7 @@ func pickCandidate(ctx context.Context, fetch network.Fetcher, candidates []netw
 // 第 13 轮：Metalink 元文件 → 候选 failover + 元数据哈希；.m3u8 → HLS 虚拟映射传输层。
 func runOne(ctx context.Context, fetch network.Fetcher, tr *network.Transport, opt *Options, urlStr, output string, store *persist.Store) error {
 	src := taskSource{url: urlStr}
+	named := false // Metalink <file name> 已提供名字则跳过 Content-Disposition 推断
 	if network.IsMetalinkURL(urlStr) {
 		ml, err := network.FetchMetalink(ctx, tr, urlStr)
 		if err != nil {
@@ -354,6 +458,7 @@ func runOne(ctx context.Context, fetch network.Fetcher, tr *network.Transport, o
 		if !explicitOut {
 			if n := sanitizeFilename(ml.Name); n != "" {
 				output = filepath.Join(filepath.Dir(output), n)
+				named = true
 			}
 		}
 		picked, err := pickCandidate(ctx, fetch, ml.URLs)
@@ -367,6 +472,14 @@ func runOne(ctx context.Context, fetch network.Fetcher, tr *network.Transport, o
 			src.verifyAlgo, src.verifySum = hash.Algorithm(ml.HashAlgo), ml.HashSum
 		}
 		urlStr = src.url
+	}
+	// 自动文件名（第 14 轮，A4）：单 URL 且未显式 -o 且 Metalink 未命名时，
+	// 询问服务端 Content-Disposition 建议（对标 IDM/Gopeed 默认行为；
+	// 多 URL 模式保持 URL 推导 + 预去重，避免任务间同名冲突）。
+	if len(opt.URLs) == 1 && opt.Output == "" && !named && startsWithAny(urlStr, "http://", "https://") {
+		if n := sanitizeFilename(tr.ContentFilename(ctx, urlStr)); n != "" && n != filepath.Base(output) {
+			output = filepath.Join(filepath.Dir(output), n)
+		}
 	}
 	// HLS：.m3u8 后缀自动启用虚拟映射传输层（内部复用 tr 的回环校验/UA/限速/重定向策略）
 	dlFetch := fetch
@@ -489,6 +602,33 @@ func runOne(ctx context.Context, fetch network.Fetcher, tr *network.Transport, o
 	return nil
 }
 
+// printSummary 输出任务进度摘要（-summary 周期输出 + 终态快照）。
+// 单行/任务：状态 | 已完成/总大小 (百分比) | 输出名 | URL。按 ID 排序保证稳定。
+func printSummary(w gio.Writer, states []*persist.State) {
+	if len(states) == 0 {
+		return
+	}
+	sort.Slice(states, func(i, j int) bool { return states[i].ID < states[j].ID })
+	for _, st := range states {
+		total := st.FileSize
+		pct := 0.0
+		if total > 0 {
+			pct = float64(st.Done) / float64(total) * 100
+			if pct > 100 {
+				pct = 100
+			}
+		}
+		sizeStr := fmt.Sprintf("%d/%dB", st.Done, total)
+		if total >= 1<<20 || st.Done >= 1<<20 {
+			sizeStr = fmt.Sprintf("%.1f/%.1fMiB", float64(st.Done)/(1<<20), float64(total)/(1<<20))
+		} else if total >= 1<<10 || st.Done >= 1<<10 {
+			sizeStr = fmt.Sprintf("%.1f/%.1fKiB", float64(st.Done)/(1<<10), float64(total)/(1<<10))
+		}
+		fmt.Fprintf(w, "[进度] %-6s %s (%.1f%%)  %s  %s\n", st.Status, sizeStr, pct, st.ID, st.URL)
+	}
+}
+
+// infoSize 安全取文件大小（nil → -1）。
 func infoSize(info os.FileInfo) int64 {
 	if info == nil {
 		return -1

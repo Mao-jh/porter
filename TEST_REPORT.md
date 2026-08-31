@@ -298,3 +298,30 @@ github.com/Mao-jh/porter           ← 零第三方依赖保持（第 13 轮未�
   虚拟映射不成立）；BYTERANGE 支持显式/缺省偏移，但跨资源缺省偏移拒绝。
 - Metalink failover 仅在探测阶段；传输中途失败不换源（字节级续传状态绑定单一源）。
 - 单元测试中 E2E 覆盖 3MiB/8MiB 量级；SFTP/BT/HTTP3 仍明确不做（零依赖约束，见 BENCHMARK）。
+
+## 12. 第 14 轮：代理 / Cookie / 批量任务 / 自动命名（真实执行）
+
+> 门禁：`./run_tests.sh`（vet=0 / 单测=0 / -race=0 / 四套进程级 e2e 全过 / 合规检查全过，
+> 原始输出见 `test_raw.log`）。
+
+### 12.1 新增能力与测试证据
+| 能力 | 实现 | 测试（真实通过） |
+|---|---|---|
+| 代理出口 `-proxy` | `network.SetProxy`（http/https/socks5，net/http 原生支持）；代理=显式出站同意（allowRemote 自动置位）；validateURL 跳过目标 DNS 预解析 | `TestSetProxy_Validation`（非法/合法 scheme 分类）、`TestSetProxy_BypassesTargetDNS`（代理模式下目标域名放行 + scheme 白名单不放松）、`TestFetchRange_ViaForwardProxy`（端到端：httptest 转发代理，全量+Range 分片内容断言、请求确实经代理出口） |
+| Cookie 文件 `-load-cookies` | `network.ParseNetscapeCookies`（7 列 TAB 格式，# 注释/#HttpOnly_ 前缀，畸形行跳过）+ `Transport.SetCookies/applyCookies`（按域后缀匹配，与 -H Cookie 共存、透传优先，probe/fetchRange/getBounded/openStream 四路径覆盖） | `TestParseNetscapeCookies`、`TestParseNetscapeCookies_Empty`、`TestSetCookies_DomainMatchAndMerge`（echo 回显断言合并顺序与域隔离）、`TestSetCookies_Cleared`、`TestCookieE2EThroughCLI`（CLI 全链路 + sha256 校验通过） |
+| 批量任务 `-i` / `-j` | `cli.readURLFile`（每行一 URL，# 注释/空行忽略）；-j 为并发任务上限（只下调不上调 R-3 模式预算） | `TestParse_URLFile`（合并/注释/畸形行报错）、`TestParse_NoURLs`、`TestRun_JobsCap`（-j=1 三任务全完成 + -summary 路径顺带覆盖） |
+| 自动文件名 | `Transport.ContentFilename`（RFC 6266 filename + RFC 5987 filename* 优先，quoted-string 转义）；优先级：显式 -o > Metalink 名 > CD > URL 尾段（CD 仅单 URL 启用，多 URL 保持 URL 推导 + 预去重） | `TestParseContentDisposition`（7 用例含 filename*/转义/缺失）、`TestContentFilename`（/cd 端点 HEAD + filename* + 无头/非回环负例）、`TestAutoFilename_CD`（端到端：产物落盘为 `setup v2.exe`） |
+| 进度摘要 `-summary` | 每秒 persist.Store 快照单行/任务（状态/进度百分比/大小），终态再输出一次 | `TestPrintSummary`；`TestRun_JobsCap` 全链路覆盖 |
+| `porter tasks` 子命令 | `cli.RunTasks/listTasks`（按更新时间倒序，状态/百分比/大小/URL/输出名） | `TestListTasks`（倒序/计数/百分比）、`TestListTasks_Empty` |
+
+### 12.2 H-3 边界回归
+- 代理未配置时：非回环目标/域名解析断言拒绝行为不变（`TestSetProxy_BypassesTargetDNS`
+  前半段 + 既有 `TestValidateURL_*` 全过）。
+- 代理配置后：出站同意语义以「显式配置代理」承接（USAGE.md/DESIGN.md 已声明），
+  scheme 白名单与重定向剥离策略不变。
+
+### 12.3 边界声明（诚实）
+- Cookie 仅域匹配，不区分 path/secure 维度（cookie.txt 本为用户主动提供的凭据文件）。
+- CD 自动命名仅单 URL 且未显式 -o 时启用；多 URL 场景保留 URL 推导 + 预去重。
+- SOCKS5 经 net/http 原生支持（socks5:// 代理 URL），未自实现拨号——零依赖约束下最短路径。
+- NTLM/摘要认证未实现（标准库无现成实现，使用面窄，见 BENCHMARK §3.2 第 4 条）。

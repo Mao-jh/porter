@@ -109,6 +109,27 @@ func ParseMetalink(body []byte) (*Metalink, error)
   头注入（HLS 跨主机剥离用）；`getBounded`（≤max 的 GET）与 `openStream`（流式 GET）
   供播放列表/密钥/元文件复用完整校验路径。公开签名不变（冻结原则）。
 
+**第 14 轮新增契约（代理 / Cookie / 自动命名）**：
+```go
+func (t *Transport) SetProxy(raw string) error   // http(s)/socks5 代理出口（net/http 原生支持，零自实现）
+func (t *Transport) SetCookies(cs []Cookie)      // 整体替换 cookie 集合；nil 清空
+type Cookie struct{ Domain, Name, Value string }
+func ParseNetscapeCookies(data []byte) ([]Cookie, error)  // curl/wget/aria2 通用 7 列格式
+func (t *Transport) ContentFilename(ctx, urlStr) string   // RFC 6266/5987 文件名建议（无则空串）
+```
+- **代理语义（H-3 产品决策）**：显式配置代理即视为显式允许出站——`allowRemote` 自动置位；
+  代理成为唯一出口（http.Transport 只拨号代理），`validateURL` 跳过目标 DNS 预解析
+  （解析与可达性交给代理，避免本端 DNS 泄露）；scheme 白名单（http/https/socks5）不变。
+- **Cookie 注入**：在透传头应用之后、发请求之前执行；仅域匹配（后缀匹配，`.example.com`
+  与 `example.com` 等价），不区分 path/secure（诚实简化）；与 `-H "Cookie: ..."` 共存时
+  透传值在前（RFC 6265 取首现者 → 透传优先）。`probe/fetchRange/getBounded/openStream`
+  四条请求路径全部覆盖；跨主机重定向剥离策略不变（applyCookies 在 CheckRedirect 之前）。
+- **自动命名优先级**：显式 `-o` > Metalink `<file name>` > Content-Disposition > URL 尾段
+  （仅单 URL 且未显式 `-o` 时启用 CD 查询；多 URL 保持 URL 推导 + 预去重防同名冲突）。
+- **CLI 新增**：`-i urls.txt`（每行一 URL，# 注释/空行忽略）、`-j N`（并发任务上限，
+  只下调不上调）、`-proxy`、`-load-cookies`、`-summary`（每秒 store 快照摘要）；
+  `porter tasks [-state-dir]` 子命令列出持久化任务（`cli.listTasks`，注入 Writer 可测）。
+
 ### 2.4 persist — 持久化
 ```go
 func Open(dir string) (*Store, error)

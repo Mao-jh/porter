@@ -30,13 +30,39 @@ GOFLAGS=-mod=readonly GOPROXY=off CGO_ENABLED=0 \
 
 # 校验算法
 ./porter http://127.0.0.1/x -verify sha256   # sha256 | sha1 | md5 | none
+
+# URL 列表文件（每行一个 URL，# 注释与空行忽略；对标 aria2 -i）
+./porter -i urls.txt -o outdir/
+
+# 并发任务数上限（0=按 -mode 自动；对标 aria2 -j）
+./porter -i urls.txt -j 2
+
+# 代理出口（http/https/socks5；显式配置代理即视为允许出站——见「约束提示」）
+./porter https://example.com/big.zip -proxy http://127.0.0.1:7890
+./porter https://example.com/big.zip -proxy socks5://127.0.0.1:1080
+
+# Cookie 文件（Netscape cookie.txt，curl/wget/aria2 通用格式；按域匹配注入）
+./porter https://example.com/private/x.zip -load-cookies cookies.txt
+
+# 自动文件名：省略 -o 时输出名取 服务端 Content-Disposition > URL 尾段（单 URL）
+./porter https://example.com/get/123          # 服务端给 CD → setup v2.exe
+
+# 进度摘要（每秒一行到 stderr，不刷屏）+ 任务列表子命令
+./porter -i urls.txt -summary
+./porter tasks                                # 列出持久化任务与历史（含可续传中间态）
 ```
 
 ## 参数
 | 参数 | 默认 | 说明 |
 |---|---|---|
-| `<url> [url2 ...]` | 必填 | 一个或多个 URL；协议 `http/https/ftp/ftps/file`；网络协议必须解析到 127.0.0.0/8（H-3，`file://` 为本地读写不涉及） |
-| `-o` | `download.bin` | 单 URL=输出文件路径；多 URL=输出目录（文件名取自 URL，同名自动 -2/-3 后缀） |
+| `<url> [url2 ...]` | 必填* | 一个或多个 URL；协议 `http/https/ftp/ftps/file`；网络协议必须解析到 127.0.0.0/8（H-3，`file://` 为本地读写不涉及；*-i 文件或 -proxy 见对应行） |
+| `-i` | 无 | URL 列表文件（每行一个 URL，`#` 注释/空行忽略）；与位置参数合并 |
+| `-j` | 0（自动） | 并发任务数上限；只下调不上调（不越过 `-mode` 的 CPU 预算） |
+| `-proxy` | 无 | 代理出口 `http(s)://host:port` 或 `socks5://host:port`；**设置即视为显式允许出站流量**（代理成为唯一出口，目标域解析交给代理） |
+| `-load-cookies` | 无 | Netscape cookie.txt 路径；按域匹配注入 Cookie 头（与 `-H "Cookie: ..."` 共存，透传优先） |
+| `-summary` | 关 | 每秒输出一次任务进度摘要到 stderr（状态 | 已完成/总大小 (百分比) | 输出 | URL） |
+| `tasks` 子命令 | — | `porter tasks [-state-dir DIR]`：按更新时间倒序列出持久化任务（含断点续传中间态） |
+| `-o` | 自动 | 单 URL=输出文件路径；多 URL=输出目录（文件名取自 URL，同名自动 -2/-3 后缀）；单 URL 省略时自动命名：服务端 `Content-Disposition` > URL 尾段 |
 | `-n` | 0（自动） | 每任务分片数；自动决策 `min(max(⌈size/8MiB⌉,3),6)`；显式 1..16 |
 | `-limit` | 0（不限） | 全局下载限速（字节/秒），跨任务跨分片共享 |
 | `-H` | 无 | 透传请求头 `"Key: Value"`，可重复 |
@@ -62,6 +88,13 @@ go run ./cmd/testserver -dir ./e2edata -name big.bin -size 67108864 -limit 41943
 
 ## 约束提示
 - **仅本地/回环**：所有 URL 必须解析到 `127.0.0.0/8`，公网地址被拒绝（H-3）。
+  CLI 的唯一显式出站开关是 `-proxy`：设置代理即视为显式允许出站流量（代理成为唯一出口，
+  目标域解析与可达性交给代理，本端不再预解析目标域名）。
+- **cookie 语义**：`-load-cookies` 仅做域匹配（`.example.com` 与 `example.com` 等价，
+  含子域后缀匹配）；不区分 path/secure 维度——cookie 文件本就是用户主动提供的凭据。
+  跨主机重定向时 Cookie/Authorization 仍按既有策略剥离。
+- **自动文件名**：仅单 URL 且未显式 `-o` 时生效（Metalink 元数据名优先于 Content-Disposition）；
+  多 URL 模式保持 URL 推导 + 预去重，避免任务间同名冲突。
 - **断点续传（字节级）**：异常退出（kill -9/崩溃/断电）后同参数重启，自动从各分片已写前缀继续；
   崩溃最多损失最近 500ms 的进度。URL 或文件大小变化、或上次已完成（done）时改为全新下载。
 - **故障重试**：429/5xx/断连/超时按指数退避（1s→30s 饱和，±20% 抖动）自动重试；

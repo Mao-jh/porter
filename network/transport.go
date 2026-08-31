@@ -40,7 +40,9 @@ type Transport struct {
 	mu          sync.RWMutex
 	limiter     *rateLimiter       // 全局限速（nil=不限速），多连接共享配额
 	headers     map[string]string  // 每请求透传头（Cookie/Authorization 等）
+	cookies     []Cookie           // cookie 文件加载的按域 cookie（第 14 轮）
 	allowRemote bool               // 允许非回环目标（产品开关，默认 false；H-3 审计边界见 README）
+	proxySet    bool               // 已配置代理（第 14 轮：显式出站同意，见 proxy.go）
 }
 
 // NewTransport 构造传输层。dialer 强制绑定 127.0.0.0/8（H-3）。
@@ -53,18 +55,23 @@ func NewTransport(allowRemote bool) *Transport {
 		LocalAddr: &net.TCPAddr{IP: net.ParseIP("127.0.0.1"), Port: 0}, // H-3：本地出口
 		Timeout:   5 * time.Second,
 	}
-	t := &Transport{
-		allowRemote: allowRemote,
-		client:      &http.Client{
-			Transport: &http.Transport{
-				DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
-					host, _, err := net.SplitHostPort(addr)
-					if err != nil {
-						return nil, err
-					}
-					ip := net.ParseIP(host)
-					if ip == nil {
-						// 域名解析：仅允许解析到回环（H-3）
+	t := &Transport{allowRemote: allowRemote}
+	// 回环校验引用 t.allowRemote（而非构造期快照）：SetProxy 置位后，
+	// 代理地址（可能非回环）必须可拨号——代理语义见 proxy.go。
+	t.client = &http.Client{
+		Transport: &http.Transport{
+			DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
+				host, _, err := net.SplitHostPort(addr)
+				if err != nil {
+					return nil, err
+				}
+				t.mu.RLock()
+				allow := t.allowRemote
+				t.mu.RUnlock()
+				ip := net.ParseIP(host)
+				if ip == nil {
+					// 域名解析：仅允许解析到回环（H-3）；代理模式下 addr 为代理主机
+					if !allow {
 						ips, err := net.LookupIP(host)
 						if err != nil {
 							return nil, err
@@ -74,37 +81,37 @@ func NewTransport(allowRemote bool) *Transport {
 								return nil, fmt.Errorf("network: 禁止非回环地址 %s(%s) (H-3)", host, candidate)
 							}
 						}
-					} else if !ip.IsLoopback() && !allowRemote {
-						return nil, fmt.Errorf("network: 禁止非回环地址 %s (H-3)", ip)
 					}
-					return dialer.DialContext(ctx, network, addr)
-				},
-				TLSHandshakeTimeout:   10 * time.Second,
-				ResponseHeaderTimeout: 15 * time.Second,
-				ExpectContinueTimeout: time.Second,
+				} else if !ip.IsLoopback() && !allow {
+					return nil, fmt.Errorf("network: 禁止非回环地址 %s (H-3)", ip)
+				}
+				return dialer.DialContext(ctx, network, addr)
 			},
-			// 不设 Client.Timeout：限速/低速大文件的总时长不可预估，
-			// 阶段性超时（拨号/响应头）+ 上下文取消已覆盖停滞场景。
-			// 重定向合规策略：跳数上限、协议白名单、跨主机剥离敏感凭据头。
-			// （重定向目标仍受拨号层回环强制约束——socket 层兜底，无法被 3xx 绕过。）
-			CheckRedirect: func(req *http.Request, via []*http.Request) error {
-				if len(via) >= maxRedirects {
-					return fmt.Errorf("network: 重定向超过 %d 跳", maxRedirects)
-				}
-				if req.URL.Scheme != "http" && req.URL.Scheme != "https" {
-					return fmt.Errorf("network: 重定向到不支持的协议 %s", req.URL.Scheme)
-				}
-				if len(via) > 0 && req.URL.Host != via[len(via)-1].URL.Host {
-					// 跨主机：剥离可携带凭据的头（Cookie/Authorization/Proxy-Authorization）
-					for _, k := range []string{"Cookie", "Authorization", "Proxy-Authorization"} {
-						req.Header.Del(k)
-					}
-				}
-				return nil
-			},
+			TLSHandshakeTimeout:   10 * time.Second,
+			ResponseHeaderTimeout: 15 * time.Second,
+			ExpectContinueTimeout: time.Second,
 		},
-		faults: &FaultConfig{},
+		// 不设 Client.Timeout：限速/低速大文件的总时长不可预估，
+		// 阶段性超时（拨号/响应头）+ 上下文取消已覆盖停滞场景。
+		// 重定向合规策略：跳数上限、协议白名单、跨主机剥离敏感凭据头。
+		// （重定向目标仍受拨号层回环强制约束——socket 层兜底，无法被 3xx 绕过。）
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			if len(via) >= maxRedirects {
+				return fmt.Errorf("network: 重定向超过 %d 跳", maxRedirects)
+			}
+			if req.URL.Scheme != "http" && req.URL.Scheme != "https" {
+				return fmt.Errorf("network: 重定向到不支持的协议 %s", req.URL.Scheme)
+			}
+			if len(via) > 0 && req.URL.Host != via[len(via)-1].URL.Host {
+				// 跨主机：剥离可携带凭据的头（Cookie/Authorization/Proxy-Authorization）
+				for _, k := range []string{"Cookie", "Authorization", "Proxy-Authorization"} {
+					req.Header.Del(k)
+				}
+			}
+			return nil
+		},
 	}
+	t.faults = &FaultConfig{}
 	return t
 }
 
@@ -194,6 +201,7 @@ func (t *Transport) probe(ctx context.Context, urlStr string, headers map[string
 			req.Header.Set(k, v)
 		}
 		applyUserAgent(req, hdrs)
+		t.applyCookies(req, hdrs)
 		if resp, err := t.client.Do(req); err == nil {
 			cl := resp.Header.Get("Content-Length")
 			ar := resp.Header.Get("Accept-Ranges")
@@ -219,6 +227,7 @@ func (t *Transport) probe(ctx context.Context, urlStr string, headers map[string
 		req2.Header.Set(k, v)
 	}
 	applyUserAgent(req2, hdrs2)
+	t.applyCookies(req2, hdrs2)
 	resp, err := t.client.Do(req2)
 	if err != nil {
 		return 0, false, err
@@ -303,6 +312,7 @@ func (t *Transport) fetchRange(ctx context.Context, urlStr string, start, end in
 		req.Header.Set(k, v)
 	}
 	applyUserAgent(req, hdrs)
+	t.applyCookies(req, hdrs)
 	sentRange := false
 	switch {
 	case end > start:
@@ -417,6 +427,11 @@ func (t *Transport) validateURL(raw string) error {
 	if host == "" {
 		return errors.New("empty host")
 	}
+	// 代理模式：目标 DNS 解析与可达性交给代理（本端不预解析目标域，
+	// 否则代理场景下的目标域名会在本端产生一次多余的 DNS 泄露）。
+	if t.proxyConfigured() {
+		return nil
+	}
 	if ip := net.ParseIP(host); ip != nil {
 		if !ip.IsLoopback() && !t.allowRemote {
 			return fmt.Errorf("host %s not loopback (H-3)", ip)
@@ -439,6 +454,96 @@ func (t *Transport) validateURL(raw string) error {
 		}
 	}
 	return nil
+}
+
+// ContentFilename 返回服务端建议文件名（RFC 6266 Content-Disposition 的
+// filename 参数；RFC 5987 filename* 优先）。无该头或解析失败返回空串。
+// 供 cli 自动命名使用（对标 IDM/Gopeed 的默认行为）。仅 http(s)。
+func (t *Transport) ContentFilename(ctx context.Context, urlStr string) string {
+	if err := t.validateURL(urlStr); err != nil {
+		return ""
+	}
+	// HEAD 优先；被服务器拒绝时回退 Range GET bytes=0-0（与 probe 同构）
+	for _, mk := range []struct {
+		method string
+		ranged bool
+	}{{http.MethodHead, false}, {http.MethodGet, true}} {
+		req, err := http.NewRequestWithContext(ctx, mk.method, urlStr, nil)
+		if err != nil {
+			return ""
+		}
+		if mk.ranged {
+			req.Header.Set("Range", "bytes=0-0")
+		}
+		hdrs := t.snapshotHeaders()
+		for k, v := range hdrs {
+			req.Header.Set(k, v)
+		}
+		applyUserAgent(req, hdrs)
+		t.applyCookies(req, hdrs)
+		resp, err := t.client.Do(req)
+		if err != nil {
+			return ""
+		}
+		cd := resp.Header.Get("Content-Disposition")
+		_ = resp.Body.Close()
+		if cd != "" {
+			if name := parseContentDisposition(cd); name != "" {
+				return name
+			}
+		}
+		// 4xx：不再重试另一方法；5xx/其他：尝试下一方法
+		if resp.StatusCode >= 400 && resp.StatusCode < 500 {
+			return ""
+		}
+	}
+	return ""
+}
+
+// parseContentDisposition 解析 Content-Disposition 的文件名。
+// filename*=UTF-8''<percent-encoded>（RFC 5987）优先于普通 filename；
+// 支持 quoted-string（处理 \" 与 \\ 转义）与裸 token 两种形态。
+func parseContentDisposition(v string) string {
+	// RFC 5987 扩展参数优先（编码信息更权威）
+	if i := strings.Index(v, "filename*="); i >= 0 {
+		raw := v[i+len("filename*="):]
+		if j := strings.IndexAny(raw, ";"); j >= 0 {
+			raw = raw[:j]
+		}
+		raw = strings.Trim(strings.TrimSpace(raw), `"`)
+		// 形如 charset'lang'percent-encoded
+		if parts := strings.SplitN(raw, "'", 3); len(parts) == 3 {
+			if dec, err := url.QueryUnescape(parts[2]); err == nil && dec != "" {
+				return dec
+			}
+		}
+	}
+	if i := strings.Index(v, "filename="); i >= 0 {
+		raw := strings.TrimSpace(v[i+len("filename="):])
+		if j := strings.IndexByte(raw, ';'); j >= 0 {
+			raw = strings.TrimSpace(raw[:j])
+		}
+		if len(raw) >= 2 && raw[0] == '"' {
+			// quoted-string：处理转义
+			var sb strings.Builder
+			for k := 1; k < len(raw); k++ {
+				if raw[k] == '\\' && k+1 < len(raw) {
+					k++
+					sb.WriteByte(raw[k])
+					continue
+				}
+				if raw[k] == '"' {
+					break
+				}
+				sb.WriteByte(raw[k])
+			}
+			return sb.String()
+		}
+		if raw != "" {
+			return raw
+		}
+	}
+	return ""
 }
 
 // httpError 携带状态码与服务端 Retry-After 建议的错误。
@@ -486,6 +591,7 @@ func (t *Transport) getBounded(ctx context.Context, urlStr string, max int64) ([
 		req.Header.Set(k, v)
 	}
 	applyUserAgent(req, hdrs)
+	t.applyCookies(req, hdrs)
 	resp, err := t.client.Do(req)
 	if err != nil {
 		return nil, err
@@ -522,6 +628,7 @@ func (t *Transport) openStream(ctx context.Context, urlStr string, headers map[s
 		req.Header.Set(k, v)
 	}
 	applyUserAgent(req, hdrs)
+	t.applyCookies(req, hdrs)
 	resp, err := t.client.Do(req)
 	if err != nil {
 		return nil, 0, err
