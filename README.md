@@ -36,8 +36,8 @@
 - **代理与凭据**：`-proxy` HTTP(S)/SOCKS5 代理出口（显式配置即显式允许出站）；
   `-load-cookies` Netscape cookie.txt（curl/wget/aria2 通用格式，按域匹配注入）
 - **自动化友好**：`-i urls.txt` 批量任务 + `-j N` 并发上限（对标 aria2 -i/-j）；
-  `-summary` 每秒进度摘要（含速率与 ETA）；`porter tasks` 任务列表；无 `-o` 时按
-  Content-Disposition 自动命名；`-o -` 流式输出到 stdout（对标 curl `-o -`）
+  `-summary` 每秒进度摘要（含速率与 ETA，周期性帧仅活跃任务、结束汇总全部）；`porter tasks`
+  任务列表；无 `-o` 时按 Content-Disposition 自动命名；`-o -` 流式输出到 stdout（对标 curl `-o -`）
 - **HTTP/2**：显式强制启用（自定义 DialContext 下默认关闭自动协商），h2 多路复用
   ——6 分片可共享一条连接（对 h2 服务端）
 - **早期失败**：下载前磁盘空间预检（跨平台；续传按 `.part` 折算；查询失败降级警告）
@@ -82,6 +82,18 @@ go install github.com/Mao-jh/porter/mcp/cmd/porter-mcp@latest
 → `download_cancel` → `list_tasks`（含历史恢复）→ `download_probe`（探测 size/ranged/name）。
 MCP 服务端同样支持 `-proxy` / `-load-cookies`（见下方命令行参数；`-allow-remote` 仍为
 直连公网目标的产品开关，代理为另一条受控出站通道）。
+
+**MCP 工具参数**（JSON 对象；除 `url` 外均可选）：
+
+| 工具 | 参数 | 说明 |
+|---|---|---|
+| `download_start` | `url`（必填）、`output_dir`、`limit_bps` | 异步启动下载，立即返回 `task_id`/`output`/`state`；同 URL 重复调用从断点续传；`output_dir` 需已存在（与 CLI 一致，不自动创建） |
+| `download_status` | `task_id`（缺省返回全部） | 查询任务状态与进度（`done_bytes`/`size_bytes`/`speed_bps`/`state`） |
+| `download_cancel` | `task_id`（必填） | 取消运行中任务（进度已落盘，可续传） |
+| `list_tasks` | — | 等价于 `download_status` 不带参数 |
+| `download_probe` | `url`（必填） | 探测 `size_bytes`/`ranged`/`url`，不下载 |
+
+示例调用：`download_start {"url":"http://127.0.0.1:8080/file.bin","output_dir":"/tmp/dl","limit_bps":10485760}`。
 
 ## 🚀 使用
 

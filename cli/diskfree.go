@@ -30,7 +30,11 @@ func preflightDisk(output string, size int64) error {
 	dir := filepath.Dir(output)
 	free, err := diskFreeBytes(dir)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "[warn] 磁盘空间查询失败（%s），跳过预检: %v\n", dir, err)
+		hint := ""
+		if _, statErr := os.Stat(dir); statErr != nil && os.IsNotExist(statErr) {
+			hint = "（目录不存在，打开输出文件将失败）"
+		}
+		fmt.Fprintf(os.Stderr, "[warn] 磁盘空间查询失败（%s）%s，跳过预检: %v\n", dir, hint, err)
 		return nil
 	}
 	if free < needed {

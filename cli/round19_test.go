@@ -16,7 +16,7 @@ func TestSummaryTracker_SpeedAndETA(t *testing.T) {
 	var sb1 strings.Builder
 	tr.renderAt(&sb1, []*persist.State{{
 		ID: "a.bin", URL: "http://127.0.0.1/a", FileSize: 64 << 20, Done: 16 << 20, Status: "running",
-	}}, t0)
+	}}, t0, true)
 	// 首帧无历史 → 速率/ETA 为 "-"
 	if !strings.Contains(sb1.String(), "- ETA -") {
 		t.Errorf("首帧应为 '-' 速率与 ETA: %q", sb1.String())
@@ -26,7 +26,7 @@ func TestSummaryTracker_SpeedAndETA(t *testing.T) {
 	var sb2 strings.Builder
 	tr.renderAt(&sb2, []*persist.State{{
 		ID: "a.bin", URL: "http://127.0.0.1/a", FileSize: 64 << 20, Done: 32 << 20, Status: "running",
-	}}, t0.Add(10*time.Second))
+	}}, t0.Add(10*time.Second), true)
 	out := sb2.String()
 	if !strings.Contains(out, "1.6MiB/s") {
 		t.Errorf("速率应为 1.6MiB/s: %q", out)
@@ -43,7 +43,7 @@ func TestSummaryTracker_SpeedAndETA(t *testing.T) {
 	var sb3 strings.Builder
 	tr.renderAt(&sb3, []*persist.State{{
 		ID: "a.bin", URL: "http://127.0.0.1/a", FileSize: 64 << 20, Done: 8 << 20, Status: "running",
-	}}, t0.Add(20*time.Second))
+	}}, t0.Add(20*time.Second), true)
 	out3 := sb3.String()
 	if strings.Contains(out3, "-MiB/s") || strings.Contains(out3, "-KiB/s") {
 		t.Errorf("回落帧速率不应为负: %q", out3)
@@ -65,27 +65,27 @@ func TestSummaryTracker_EMADecay(t *testing.T) {
 	}
 	// 帧1 播种：done=0（无历史 → "-"）
 	var sb1 strings.Builder
-	tr.renderAt(&sb1, states(0), t0)
+	tr.renderAt(&sb1, states(0), t0, true)
 	// 帧2 首历史：instant=16MiB/s → 播种 16
 	var sb2 strings.Builder
-	tr.renderAt(&sb2, states(16), t0.Add(time.Second))
+	tr.renderAt(&sb2, states(16), t0.Add(time.Second), true)
 	if !strings.Contains(sb2.String(), "16.0MiB/s") {
 		t.Fatalf("播种帧应为 16.0MiB/s: %q", sb2.String())
 	}
 	// 帧3 瞬时 0 → EMA = 0.5×16 + 0.5×0 = 8
 	var sb3 strings.Builder
-	tr.renderAt(&sb3, states(16), t0.Add(2*time.Second))
+	tr.renderAt(&sb3, states(16), t0.Add(2*time.Second), true)
 	if !strings.Contains(sb3.String(), "8.0MiB/s") {
 		t.Errorf("帧3 EMA 应为 8.0MiB/s: %q", sb3.String())
 	}
 	// 帧4 → 4，帧5 → 2（指数衰减）
 	var sb4 strings.Builder
-	tr.renderAt(&sb4, states(16), t0.Add(3*time.Second))
+	tr.renderAt(&sb4, states(16), t0.Add(3*time.Second), true)
 	if !strings.Contains(sb4.String(), "4.0MiB/s") {
 		t.Errorf("帧4 EMA 应为 4.0MiB/s: %q", sb4.String())
 	}
 	var sb5 strings.Builder
-	tr.renderAt(&sb5, states(16), t0.Add(4*time.Second))
+	tr.renderAt(&sb5, states(16), t0.Add(4*time.Second), true)
 	if !strings.Contains(sb5.String(), "2.0MiB/s") {
 		t.Errorf("帧5 EMA 应为 2.0MiB/s: %q", sb5.String())
 	}
@@ -141,9 +141,37 @@ func TestHumanBytes(t *testing.T) {
 func TestSummaryTracker_Empty(t *testing.T) {
 	var sb strings.Builder
 	tr := newSummaryTracker()
-	tr.renderAt(&sb, nil, time.Now())
+	tr.renderAt(&sb, nil, time.Now(), true)
 	if sb.Len() != 0 {
 		t.Errorf("空集应无输出: %q", sb.String())
+	}
+}
+
+// TestSummaryTracker_SkipDoneOnTick 周期性帧（showDone=false）跳过已完成任务，
+// 终态帧（renderAll/showDone=true）打印全部——避免多任务时已 done 历史刷屏。
+func TestSummaryTracker_SkipDoneOnTick(t *testing.T) {
+	states := []*persist.State{
+		{ID: "a.bin", URL: "http://127.0.0.1/a", FileSize: 4 << 20, Done: 4 << 20, Status: "done"},
+		{ID: "b.bin", URL: "http://127.0.0.1/b", FileSize: 4 << 20, Done: 1 << 20, Status: "running"},
+	}
+	t0 := time.Unix(2000, 0)
+	// 周期性帧：只应出现 running 的 b.bin
+	var sb strings.Builder
+	tr := newSummaryTracker()
+	tr.renderAt(&sb, states, t0, false)
+	out := sb.String()
+	if strings.Contains(out, "a.bin") {
+		t.Errorf("周期性帧不应输出 done 任务: %q", out)
+	}
+	if !strings.Contains(out, "b.bin") {
+		t.Errorf("周期性帧应输出 running 任务: %q", out)
+	}
+	// 终态帧：全部任务
+	var sb2 strings.Builder
+	tr.renderAt(&sb2, states, t0.Add(time.Second), true)
+	out2 := sb2.String()
+	if !strings.Contains(out2, "a.bin") || !strings.Contains(out2, "b.bin") {
+		t.Errorf("终态帧应输出全部任务: %q", out2)
 	}
 }
 

@@ -368,7 +368,7 @@ func RunMulti(ctx context.Context, opt *Options) error {
 	if opt.Summary {
 		close(stopSummary)
 		<-summaryExited
-		tracker.render(os.Stderr, store.All()) // 终态快照
+		tracker.renderAll(os.Stderr, store.All()) // 终态快照（含全部任务）
 	}
 	close(results)
 
@@ -567,6 +567,12 @@ func runOne(ctx context.Context, fetch network.Fetcher, tr *network.Transport, o
 	// 稀疏文件：续传时保留 .part 已有内容（OpenSparse 不截断）
 	sf, err := io.OpenSparse(output, plan.FileSize)
 	if err != nil {
+		// R22：父目录缺失时给出明确提示（此前仅报 OS 层 "cannot find the path"）
+		if parent := filepath.Dir(output); parent != "." && parent != "" && parent != string(filepath.Separator) {
+			if _, statErr := os.Stat(parent); statErr != nil && os.IsNotExist(statErr) {
+				return fmt.Errorf("打开输出文件失败: 输出目录不存在 %q（请先创建，或使用已存在的 -o 目录）: %w", parent, err)
+			}
+		}
 		return fmt.Errorf("打开输出文件失败: %w", err)
 	}
 	defer sf.Abort() // 未 Commit 前保证清理

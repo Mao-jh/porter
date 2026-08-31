@@ -28,12 +28,18 @@ func newSummaryTracker() *summaryTracker {
 }
 
 // render 输出本帧摘要（时间取当前；renderAt 为可注入时间的测试变体）。
+// 周期性帧只打印活跃任务（status!=done），避免已完成任务每帧刷屏。
 func (s *summaryTracker) render(w gio.Writer, states []*persist.State) {
-	s.renderAt(w, states, time.Now())
+	s.renderAt(w, states, time.Now(), false)
 }
 
-// renderAt 按指定时刻输出摘要并更新内部快照。
-func (s *summaryTracker) renderAt(w gio.Writer, states []*persist.State, now time.Time) {
+// renderAll 输出终态快照：全部任务（含 done），供 -summary 结束时汇总。
+func (s *summaryTracker) renderAll(w gio.Writer, states []*persist.State) {
+	s.renderAt(w, states, time.Now(), true)
+}
+
+// renderAt 按指定时刻输出摘要并更新内部快照。showDone=false 时跳过已完成任务。
+func (s *summaryTracker) renderAt(w gio.Writer, states []*persist.State, now time.Time, showDone bool) {
 	if len(states) == 0 {
 		return
 	}
@@ -58,6 +64,9 @@ func (s *summaryTracker) renderAt(w gio.Writer, states []*persist.State, now tim
 				speed = instant // 播种：首个有历史帧直接用瞬时值
 			}
 			s.ema[st.ID] = speed
+		}
+		if st.Status == "done" && !showDone {
+			continue // 已完成任务不在周期性帧重复输出（终态帧 renderAll 会汇总）
 		}
 		eta := ""
 		if st.FileSize > 0 && speed > 0 {
