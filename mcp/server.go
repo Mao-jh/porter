@@ -125,11 +125,12 @@ type DownloadProbeIn struct {
 }
 
 type DownloadProbeOut struct {
-	URL    string `json:"url"`
-	Size   int64  `json:"size_bytes"` // 0=未知（流式）
-	Ranged bool   `json:"ranged"`     // 服务端是否支持 Range（可并行分片）
-	Name   string `json:"name,omitempty"`
-	Error  string `json:"error,omitempty"`
+	URL      string `json:"url"`
+	Size     int64  `json:"size_bytes"` // 0=未知（流式）
+	Ranged   bool   `json:"ranged"`     // 服务端是否支持 Range（可并行分片）
+	Name     string `json:"name,omitempty"`
+	FinalURL string `json:"final_url,omitempty"` // 重定向后最终地址（R20）
+	Error    string `json:"error,omitempty"`
 }
 
 // Probe 探测单个 URL：大小 / Range 支持 / 服务端建议文件名（不下载）。
@@ -143,7 +144,14 @@ func (d *Downloader) Probe(ctx context.Context, urlStr string) (DownloadProbeOut
 	if err != nil {
 		return DownloadProbeOut{}, err
 	}
-	return DownloadProbeOut{URL: urlStr, Size: size, Ranged: ranged, Name: name}, nil
+	out := DownloadProbeOut{URL: urlStr, Size: size, Ranged: ranged, Name: name}
+	if startsWithAnyScheme(urlStr, "http://", "https://") {
+		if final := cli.FinalURLFor(ctx, d.cfg.Proxy, d.cfg.CookieFile,
+			d.cfg.AllowRemote, nil, urlStr); final != "" && final != urlStr {
+			out.FinalURL = final
+		}
+	}
+	return out, nil
 }
 
 // ---- 核心逻辑 ----

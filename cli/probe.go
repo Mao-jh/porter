@@ -70,12 +70,24 @@ func ProbeURL(ctx context.Context, proxy, cookieFile string, allowRemote bool,
 	return size, ranged, name, nil
 }
 
+// FinalURLFor 返回 URL 重定向后的最终地址（MCP download_probe 复用；空串=失败）。
+func FinalURLFor(ctx context.Context, proxy, cookieFile string, allowRemote bool,
+	headers map[string]string, urlStr string) string {
+	opt := &Options{Proxy: proxy, CookieFile: cookieFile, Headers: headers}
+	tr, _, err := buildTransport(opt, allowRemote)
+	if err != nil {
+		return ""
+	}
+	return tr.FinalURL(ctx, urlStr)
+}
+
 // RunProbe 探测每个 URL 并打印：
 //
 //	url=<原 URL>
 //	size=<字节数，0=未知>
 //	ranged=<true|false>
 //	name=<服务端建议文件名>（仅 http(s) 且有 Content-Disposition 时输出）
+//	final_url=<重定向后最终地址>（仅 http(s) 且与输入不同时输出；对标 wget --spider）
 //
 // 任一 URL 探测失败即返回聚合错误（退出码 1），其余 URL 仍继续探测。
 func RunProbe(ctx context.Context, opt *Options) error {
@@ -99,6 +111,9 @@ func RunProbe(ctx context.Context, opt *Options) error {
 		if strings.HasPrefix(u, "http://") || strings.HasPrefix(u, "https://") {
 			if name := tr.ContentFilename(ctx, u); name != "" {
 				fmt.Fprintf(os.Stdout, "name=%s\n", name)
+			}
+			if final := tr.FinalURL(ctx, u); final != "" && final != u {
+				fmt.Fprintf(os.Stdout, "final_url=%s\n", final)
 			}
 		}
 	}

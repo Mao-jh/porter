@@ -29,6 +29,17 @@ func TestMCP_DownloadProbe(t *testing.T) {
 	if name, _ := out["name"].(string); name != "setup v2.exe" {
 		t.Errorf("name = %q, 期望 setup v2.exe", name)
 	}
+
+	// R20：重定向 → final_url 指向最终地址；无重定向 → 缺省不输出
+	redir := h.s.BaseURL() + "/redirect?to=" + h.FileURL("f.bin")
+	out = callTool(t, cs, "download_probe", map[string]any{"url": redir})
+	if fin, _ := out["final_url"].(string); fin != h.FileURL("f.bin") {
+		t.Errorf("final_url = %q, 期望 %q", fin, h.FileURL("f.bin"))
+	}
+	out = callTool(t, cs, "download_probe", map[string]any{"url": h.FileURL("f.bin")})
+	if _, has := out["final_url"]; has {
+		t.Errorf("无重定向不应输出 final_url: %v", out)
+	}
 }
 
 // TestMCP_DownloadProbe_Errors 非法 scheme / 非回环（默认配置）→ isError。

@@ -12,14 +12,19 @@ import (
 	"github.com/Mao-jh/porter/persist"
 )
 
-// summaryTracker 跨帧跟踪任务进度（速率 = 本帧 done 增量 / 帧间隔）。
+// speedEmaAlpha EMA 平滑系数（R20）：速率=α×上帧EMA + (1-α)×瞬时值。
+// 首个有历史帧播种瞬时值（不做混合），避免首帧被 α 拉低。
+const speedEmaAlpha = 0.5
+
+// summaryTracker 跨帧跟踪任务进度（速率经 EMA 平滑，抗瞬时抖动）。
 type summaryTracker struct {
-	prev map[string]int64 // id -> 上帧 done 字节
-	at   time.Time        // 上帧时间
+	prev map[string]int64  // id -> 上帧 done 字节
+	ema  map[string]float64 // id -> 平滑速率（字节/秒）
+	at   time.Time         // 上帧时间
 }
 
 func newSummaryTracker() *summaryTracker {
-	return &summaryTracker{prev: map[string]int64{}, at: time.Now()}
+	return &summaryTracker{prev: map[string]int64{}, ema: map[string]float64{}, at: time.Now()}
 }
 
 // render 输出本帧摘要（时间取当前；renderAt 为可注入时间的测试变体）。
@@ -43,10 +48,16 @@ func (s *summaryTracker) renderAt(w gio.Writer, states []*persist.State, now tim
 		prev, had := s.prev[st.ID]
 		speed := 0.0
 		if had && dt > 0 {
-			speed = float64(done-prev) / dt
-			if speed < 0 {
-				speed = 0
+			instant := float64(done-prev) / dt
+			if instant < 0 {
+				instant = 0 // done 回落（任务重启）：瞬时速率钳 0
 			}
+			if prevEma, ok := s.ema[st.ID]; ok {
+				speed = speedEmaAlpha*prevEma + (1-speedEmaAlpha)*instant
+			} else {
+				speed = instant // 播种：首个有历史帧直接用瞬时值
+			}
+			s.ema[st.ID] = speed
 		}
 		eta := ""
 		if st.FileSize > 0 && speed > 0 {

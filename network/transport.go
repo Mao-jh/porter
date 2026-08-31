@@ -459,6 +459,41 @@ func (t *Transport) validateURL(raw string) error {
 	return nil
 }
 
+// FinalURL 返回重定向解析后的最终 URL（对标 wget --spider 的最终地址展示；
+// http.Client 自动跟随跳转，resp.Request.URL 即最终请求地址）。失败返回空串。
+// 仅 http(s)。供 porter probe / MCP download_probe 输出。
+func (t *Transport) FinalURL(ctx context.Context, urlStr string) string {
+	if err := t.validateURL(urlStr); err != nil {
+		return ""
+	}
+	for _, mk := range []struct {
+		method string
+		ranged bool
+	}{{http.MethodHead, false}, {http.MethodGet, true}} {
+		req, err := http.NewRequestWithContext(ctx, mk.method, urlStr, nil)
+		if err != nil {
+			return ""
+		}
+		if mk.ranged {
+			req.Header.Set("Range", "bytes=0-0")
+		}
+		hdrs := t.snapshotHeaders()
+		for k, v := range hdrs {
+			req.Header.Set(k, v)
+		}
+		applyUserAgent(req, hdrs)
+		t.applyCookies(req, hdrs)
+		resp, err := t.client.Do(req)
+		if err != nil {
+			return ""
+		}
+		final := resp.Request.URL.String()
+		_ = resp.Body.Close()
+		return final
+	}
+	return ""
+}
+
 // ContentFilename 返回服务端建议文件名（RFC 6266 Content-Disposition 的
 // filename 参数；RFC 5987 filename* 优先）。无该头或解析失败返回空串。
 // 供 cli 自动命名使用（对标 IDM/Gopeed 的默认行为）。仅 http(s)。

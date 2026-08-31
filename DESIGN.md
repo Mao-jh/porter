@@ -253,3 +253,11 @@ cli.Run
   便于测试；`-summary` 周期输出与终态快照均经 tracker。
 - 新测试：`network/h2_test.go`（配置断言 + httptest TLS h2 协商/并发复用）、
   `cli/round19_test.go`（两帧差分速率/ETA、回落钳 0、格式化用例）。
+
+**第 20 轮新增契约（probe 最终 URL / summary EMA 平滑）**：
+- `Transport.FinalURL(ctx, urlStr)`：HEAD（回退 Range GET 0-0）返回 `resp.Request.URL`
+  （http.Client 自动跟随跳转后的最终地址；wget --spider 对标）；失败空串。
+- CLI `porter probe`：http(s) 且最终地址≠输入时输出 `final_url=`；
+  `cli.FinalURLFor` 供 MCP `download_probe` 复用（`final_url` 字段，缺省 omitempty）。
+- `summaryTracker` 速率 EMA 平滑（α=0.5）：首个有历史帧播种瞬时值（不做混合），
+  之后 `speed = α·prev + (1-α)·instant`；瞬时速率钳 0（done 回落），ETA 按平滑速率计算。

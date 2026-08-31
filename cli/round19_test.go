@@ -38,7 +38,8 @@ func TestSummaryTracker_SpeedAndETA(t *testing.T) {
 		t.Errorf("百分比应为 50.0%%: %q", out)
 	}
 
-	// 第三帧：done 回落（任务重启）→ 速率钳为 0（不出现负数），ETA 未知为 "-"
+	// 第三帧：done 回落（任务重启）→ 瞬时速率钳 0，但 EMA 平滑衰减
+	// （0.5×1.6 + 0.5×0 = 0.8MiB/s；ETA = 56MiB/0.8 = 70s → "1m 10s"）
 	var sb3 strings.Builder
 	tr.renderAt(&sb3, []*persist.State{{
 		ID: "a.bin", URL: "http://127.0.0.1/a", FileSize: 64 << 20, Done: 8 << 20, Status: "running",
@@ -47,8 +48,46 @@ func TestSummaryTracker_SpeedAndETA(t *testing.T) {
 	if strings.Contains(out3, "-MiB/s") || strings.Contains(out3, "-KiB/s") {
 		t.Errorf("回落帧速率不应为负: %q", out3)
 	}
-	if !strings.Contains(out3, "0B/s ETA -") {
-		t.Errorf("回落帧应为 0B/s 且 ETA 未知: %q", out3)
+	if !strings.Contains(out3, "819.2KiB/s ETA 1m 10s") {
+		t.Errorf("回落帧应为 EMA 819.2KiB/s + ETA 1m 10s: %q", out3)
+	}
+}
+
+// TestSummaryTracker_EMADecay EMA 平滑收敛：瞬时速率归零后逐帧衰减。
+func TestSummaryTracker_EMADecay(t *testing.T) {
+	tr := newSummaryTracker()
+	t0 := time.Unix(1000, 0)
+	states := func(doneMiB int) []*persist.State {
+		return []*persist.State{{
+			ID: "x.bin", URL: "http://127.0.0.1/x", FileSize: 100 << 20,
+			Done: int64(doneMiB) << 20, Status: "running",
+		}}
+	}
+	// 帧1 播种：done=0（无历史 → "-"）
+	var sb1 strings.Builder
+	tr.renderAt(&sb1, states(0), t0)
+	// 帧2 首历史：instant=16MiB/s → 播种 16
+	var sb2 strings.Builder
+	tr.renderAt(&sb2, states(16), t0.Add(time.Second))
+	if !strings.Contains(sb2.String(), "16.0MiB/s") {
+		t.Fatalf("播种帧应为 16.0MiB/s: %q", sb2.String())
+	}
+	// 帧3 瞬时 0 → EMA = 0.5×16 + 0.5×0 = 8
+	var sb3 strings.Builder
+	tr.renderAt(&sb3, states(16), t0.Add(2*time.Second))
+	if !strings.Contains(sb3.String(), "8.0MiB/s") {
+		t.Errorf("帧3 EMA 应为 8.0MiB/s: %q", sb3.String())
+	}
+	// 帧4 → 4，帧5 → 2（指数衰减）
+	var sb4 strings.Builder
+	tr.renderAt(&sb4, states(16), t0.Add(3*time.Second))
+	if !strings.Contains(sb4.String(), "4.0MiB/s") {
+		t.Errorf("帧4 EMA 应为 4.0MiB/s: %q", sb4.String())
+	}
+	var sb5 strings.Builder
+	tr.renderAt(&sb5, states(16), t0.Add(4*time.Second))
+	if !strings.Contains(sb5.String(), "2.0MiB/s") {
+		t.Errorf("帧5 EMA 应为 2.0MiB/s: %q", sb5.String())
 	}
 }
 

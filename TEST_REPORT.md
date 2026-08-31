@@ -408,3 +408,19 @@ github.com/Mao-jh/porter           ← 零第三方依赖保持（第 13 轮未�
   自签名信任面）；生产 https 目标走系统信任链 + ALPN 自动协商。
 - `-summary` 速率/ETA 基于 1s 采样差分：低速长任务首帧无速率（"-"）；任务重启
   （done 回落）速率钳 0、ETA 显示未知。
+
+## 18. 第 20 轮：probe 最终 URL / summary 速率 EMA 平滑（真实执行）
+
+> 门禁：`./run_tests.sh`（vet / 单测 / -race / 四套进程级 e2e / 合规检查 + TUI/MCP 模块，
+> 原始输出见 `test_raw.log`）。
+
+### 18.1 新增能力与测试证据
+| 能力 | 实现 | 测试（真实通过） |
+|---|---|---|
+| probe 最终 URL | `Transport.FinalURL`（HEAD/Range GET → `resp.Request.URL`）；CLI 输出 `final_url=`（仅不同时）；`cli.FinalURLFor` 供 MCP 复用（`final_url` 字段） | `TestRunProbe_FinalURL`（/redirect 302 → final_url 指向目标）、`TestRunProbe_NoFinalURL`（无重定向不输出）、`TestFinalURLFor`（含非回环空串负例）、`TestMCP_DownloadProbe`（final_url 有/无断言） |
+| summary 速率 EMA 平滑 | `summaryTracker.ema`（α=0.5）；首个有历史帧播种瞬时值，之后混合；瞬时钳 0；ETA 按平滑速率 | `TestSummaryTracker_SpeedAndETA`（回落帧 EMA=819.2KiB/s + ETA 1m 10s）、`TestSummaryTracker_EMADecay`（16→8→4→2MiB/s 指数衰减） |
+
+### 18.2 边界声明（诚实）
+- `final_url` 仅 http(s) 输出；HEAD 失败自动回退 Range GET；与输入相同不输出（避免噪音）。
+- EMA 平滑延迟真实速率突变（如限速变化后 2-3 帧收敛）；任务重启（done 回落）瞬时钳 0
+  但平滑速率需数帧衰减，ETA 随之逐步恢复——比瞬时值更稳但更"保守"。
