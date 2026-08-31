@@ -4,11 +4,13 @@
 # 设计目标：让新上下文（人或 AI）跑一个脚本即可完成核心验证，零摸索、零碰壁：
 #   - testserver 用固定端口（-addr），URL 确定，不再"每次启动端口随机"
 #   - 每步演示打印 [PASS]/[FAIL]，末尾汇总，退出码可断言
-#   - 强杀续传用 PowerShell 按命令行特征精确杀进程（Git Bash kill -9 杀不干净 exe）
+#   - 跨平台：Windows 用预编译 bin/*.exe（强杀用进程管理按命令行特征精确杀，
+#     Git Bash kill -9 杀不干净 exe）；Linux/macOS 现场构建到临时目录
 #   - 结束自动清理服务端与临时目录
 #
 # 用法: ./scripts/demo.sh [PORT]      # 默认端口 54321
-# 依赖: bin/porter.exe、bin/testserver.exe、mcp/porter-mcp.exe（MCP 段需要 python）
+# 依赖: Windows 需 bin/ 预编译产物；Linux/macOS 需 Go 工具链（现场构建）；
+#       MCP 段需要 python
 set -u
 cd "$(dirname "$0")/.."
 ROOT=$(pwd)
@@ -23,19 +25,49 @@ ok()   { PASS=$((PASS+1)); echo "[PASS] $1"; }
 ko()   { FAIL=$((FAIL+1)); echo "[FAIL] $1"; }
 skip() { SKIP=$((SKIP+1)); echo "[SKIP] $1"; }
 
-sha256() { certutil -hashfile "$1" SHA256 2>/dev/null | sed -n 2p | tr 'A-F' 'a-f'; }
+# ---------- 平台检测与工具绑定 ----------
+case "$(uname -s)" in
+  MINGW*|MSYS*|CYGWIN*) OS=windows ;;
+  *) OS=unix ;;
+esac
+
+if [ "$OS" = windows ]; then
+  PORTER="$ROOT/bin/porter.exe"; TSERVER="$ROOT/bin/testserver.exe"; PMCP="$ROOT/mcp/porter-mcp.exe"
+  sha256() { certutil -hashfile "$1" SHA256 2>/dev/null | sed -n 2p | tr 'A-F' 'a-f'; }
+  # 按命令行特征杀进程（Win32_Process.CommandLine 包含模式即杀）
+  kill_proc() { powershell -NoProfile -Command "Get-CimInstance Win32_Process | Where-Object { \$_.CommandLine -like '*$1*' } | ForEach-Object { Stop-Process -Id \$_.ProcessId -Force }" >/dev/null 2>&1; }
+  cyg() { cygpath -w "$1" 2>/dev/null || echo "$1"; }
+else
+  # Linux/macOS：现场构建到临时目录（bin/ 仅含 Windows 预编译产物）
+  PORTER="$WORK/porter"; TSERVER="$WORK/testserver"; PMCP="$WORK/porter-mcp"
+  sha256() { (shasum -a 256 "$1" 2>/dev/null || sha256sum "$1" 2>/dev/null) | awk '{print $1}' | tr 'A-F' 'a-f'; }
+  kill_proc() { pkill -f "$1" 2>/dev/null || true; }
+  cyg() { echo "$1"; }
+fi
 
 # ---------- 0. 产物检查 ----------
 step "0. 产物检查"
-PORTER="$ROOT/bin/porter.exe"; TSERVER="$ROOT/bin/testserver.exe"; PMCP="$ROOT/mcp/porter-mcp.exe"
-for f in "$PORTER" "$TSERVER"; do
-  [ -f "$f" ] && ok "存在 $f" || ko "缺失 $f（先 ./run_tests.sh 或 go build）"
-done
-[ -f "$PMCP" ] && ok "存在 $PMCP" || skip "缺失 $PMCP（MCP 段跳过）"
+if [ "$OS" = windows ]; then
+  for f in "$PORTER" "$TSERVER"; do
+    [ -f "$f" ] && ok "存在 $f" || ko "缺失 $f（先 ./run_tests.sh 或 go build）"
+  done
+  [ -f "$PMCP" ] && ok "存在 $PMCP" || skip "缺失 $PMCP（MCP 段跳过）"
+  if [ $FAIL -gt 0 ]; then echo "产物缺失，中止"; exit 1; fi
+else
+  if command -v go >/dev/null 2>&1; then
+    (cd "$ROOT" && GOFLAGS=-mod=readonly GOPROXY=off go build -o "$PORTER" ./cmd/porter && \
+      GOFLAGS=-mod=readonly GOPROXY=off go build -o "$TSERVER" ./cmd/testserver) \
+      && ok "现场构建 porter/testserver" || ko "现场构建失败（需要 Go 工具链）"
+    (cd "$ROOT/mcp" && GOFLAGS=-mod=readonly GOPROXY=off go build -o "$PMCP" ./cmd/porter-mcp) \
+      && ok "现场构建 porter-mcp" || skip "porter-mcp 构建失败（MCP 段跳过）"
+  else
+    ko "缺少 Go 工具链（Linux/macOS 需现场构建）"
+  fi
+  if [ $FAIL -gt 0 ]; then echo "构建失败，中止"; exit 1; fi
+fi
 
 # ---------- 1. 启动本地服务端（固定端口） ----------
 step "1. 启动 testserver（127.0.0.1:$PORT，固定端口）"
-if [ $FAIL -gt 0 ]; then echo "产物缺失，中止"; exit 1; fi
 nohup "$TSERVER" -addr "127.0.0.1:$PORT" -size "$SIZE" -name big.bin -extra "tiny.bin:1024" > "$LOG" 2>&1 &
 ready=""
 for i in $(seq 1 40); do
@@ -83,7 +115,7 @@ else ko "批量任务失败"; fi
 step "5. 断点续传（1MiB/s 下载，3s 后强杀，重启续传 + sha256）"
 "$PORTER" "$URL" -o resume.bin -limit 1048576 -state-dir .st5 > resume1.log 2>&1 &
 sleep 3
-powershell -NoProfile -Command "Get-CimInstance Win32_Process | Where-Object { \$_.CommandLine -like '*porter.exe*resume.bin*' } | ForEach-Object { Stop-Process -Id \$_.ProcessId -Force }" >/dev/null 2>&1
+kill_proc "resume.bin"   # 精确匹配本段下载任务，不误杀其他 porter
 sleep 1
 if "$PORTER" "$URL" -o resume.bin -limit 1048576 -state-dir .st5 > resume2.log 2>&1 && grep -q "完成" resume2.log; then
   ph=$(sha256 resume.bin); want=$(sha256 a.bin)
@@ -96,16 +128,13 @@ PY=""
 command -v python >/dev/null 2>&1 && PY=python || command -v python3 >/dev/null 2>&1 && PY=python3
 if [ -n "$PY" ] && [ -f "$PMCP" ]; then
   # MSYS 路径（/c/...）转 Windows 路径（C:/...），否则原生 exe 解析错误
-  WIN_ROOT=$(cygpath -w "$ROOT" 2>/dev/null || echo "$ROOT")
-  WIN_PMCP=$(cygpath -w "$PMCP" 2>/dev/null || echo "$PMCP")
-  WIN_OUT=$(cygpath -w "$WORK/mcp_out" 2>/dev/null || echo "$WORK/mcp_out")
-  if "$PY" "$WIN_ROOT/scripts/mcp_smoke.py" "$WIN_PMCP" "$TINY" "$WIN_OUT"; then
+  if "$PY" "$(cyg "$ROOT")/scripts/mcp_smoke.py" "$(cyg "$PMCP")" "$TINY" "$(cyg "$WORK/mcp_out")"; then
     ok "MCP 全流程通过"; else ko "MCP 冒烟失败"; fi
-else skip "无 python 或 porter-mcp.exe 缺失"; fi
+else skip "无 python 或 porter-mcp 缺失"; fi
 
 # ---------- 7. 清理 ----------
 step "7. 清理"
-powershell -NoProfile -Command "Get-CimInstance Win32_Process | Where-Object { \$_.CommandLine -like '*testserver.exe*$PORT*' } | ForEach-Object { Stop-Process -Id \$_.ProcessId -Force }" >/dev/null 2>&1
+kill_proc "testserver.*$PORT"
 rm -rf "$WORK"
 ok "已停止服务端并清理临时目录"
 

@@ -104,6 +104,9 @@ MCP 服务端同样支持 `-proxy` / `-load-cookies`（见下方命令行参数�
 ./scripts/demo.sh 54322      # 指定端口（默认 54321）
 ```
 
+跨平台：Windows 直接用 `bin/` 预编译产物；Linux/macOS 自动现场构建（需 Go 工具链，
+MCP 段需 python）。退出码 0 = 全部通过。
+
 手工起服务端（**端口可固定**，不再随机）：
 
 ```bash

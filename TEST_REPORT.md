@@ -465,6 +465,6 @@ github.com/Mao-jh/porter           ← 零第三方依赖保持（第 13 轮未�
 | 项 | 实现 | 验证（真实执行） |
 |---|---|---|
 | testserver 固定端口 | `cmd/testserver` 增 `-addr` flag（如 `-addr 127.0.0.1:54321`），默认仍随机端口；URL 确定可写进脚本/文档 | `./bin/testserver.exe -addr 127.0.0.1:54321 …` → `url=http://127.0.0.1:54321/file/big.bin` 固定 |
-| 一键试用 `scripts/demo.sh` | 固定端口起服务端 → 12 项核心演示（产物检查/基础下载+sha256/probe/meta/tasks/批量+限速/强杀续传/MCP 冒烟）→ 自动清理；强杀用 PowerShell 按命令行特征精确杀进程（Git Bash `kill -9` 杀不干净 exe）；MSYS 路径经 `cygpath -w` 转 Windows 路径 | 两次实跑 12/12 PASS、退出码 0、无残留进程；已纳入 `run_tests.sh` T5（随机偏移端口避冲突） |
+| 一键试用 `scripts/demo.sh` | 固定端口起服务端 → 12 项核心演示（产物检查/基础下载+sha256/probe/meta/tasks/批量+限速/强杀续传/MCP 冒烟）→ 自动清理；跨平台：Windows 用预编译 `bin/*.exe`（强杀用进程管理按命令行特征精确杀，Git Bash `kill -9` 杀不干净 exe；MSYS 路径经 `cygpath -w` 转 Windows 路径），Linux/macOS 自动现场构建（Go 工具链）并用 `shasum`/`pkill` | 两次实跑 12/12 PASS、退出码 0、无残留进程；`bash -n` 语法通过；已纳入 `run_tests.sh` T5（随机偏移端口避冲突） |
 | MCP 冒烟增强 | `scripts/mcp_smoke.py`：`-state-root` 隔离、tools 断言 5 工具、新增 `download_probe` 段、下载产物存在/非空校验 | demo 段实测：initialize → tools(5) → start → status done → probe → 产物 1024B |
 | 文档 | README 增"⚡ 快速试用"；USAGE 端到端示例改用固定端口 | — |
