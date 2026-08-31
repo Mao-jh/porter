@@ -36,8 +36,10 @@
 - **代理与凭据**：`-proxy` HTTP(S)/SOCKS5 代理出口（显式配置即显式允许出站）；
   `-load-cookies` Netscape cookie.txt（curl/wget/aria2 通用格式，按域匹配注入）
 - **自动化友好**：`-i urls.txt` 批量任务 + `-j N` 并发上限（对标 aria2 -i/-j）；
-  `-summary` 每秒进度摘要；`porter tasks` 任务列表；无 `-o` 时按
+  `-summary` 每秒进度摘要（含速率与 ETA）；`porter tasks` 任务列表；无 `-o` 时按
   Content-Disposition 自动命名；`-o -` 流式输出到 stdout（对标 curl `-o -`）
+- **HTTP/2**：显式强制启用（自定义 DialContext 下默认关闭自动协商），h2 多路复用
+  ——6 分片可共享一条连接（对 h2 服务端）
 - **早期失败**：下载前磁盘空间预检（跨平台；续传按 `.part` 折算；查询失败降级警告）
 - **故障自愈**：429/5xx/断连/超时指数退避（1s→30s 饱和，±20% 抖动）；尊重 `Retry-After`；
   其余 4xx 不重试

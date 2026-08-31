@@ -60,6 +60,9 @@ func NewTransport(allowRemote bool) *Transport {
 	// 代理地址（可能非回环）必须可拨号——代理语义见 proxy.go。
 	t.client = &http.Client{
 		Transport: &http.Transport{
+			// 自定义 DialContext 默认会关闭自动 HTTP/2 协商（R19：显式强制尝试；
+			// 对 https 目标与 h2 服务端协商多路复用——6 分片可共享一条连接）
+			ForceAttemptHTTP2: true,
 			DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
 				host, _, err := net.SplitHostPort(addr)
 				if err != nil {

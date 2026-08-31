@@ -124,17 +124,22 @@ func TestListTasks_Empty(t *testing.T) {
 	}
 }
 
-// TestPrintSummary 摘要输出（-summary 路径）。
+// TestPrintSummary 摘要输出（-summary 路径，经 summaryTracker）。
 func TestPrintSummary(t *testing.T) {
 	var sb strings.Builder
-	printSummary(&sb, []*persist.State{{
+	tr := newSummaryTracker()
+	tr.renderAt(&sb, []*persist.State{{
 		ID: "c.bin", URL: "http://127.0.0.1/c", FileSize: 4 << 20, Done: 3 << 20, Status: "running",
-	}})
+	}}, time.Unix(1000, 0))
 	out := sb.String()
 	if !strings.Contains(out, "[进度]") || !strings.Contains(out, "75.0%") || !strings.Contains(out, "3.0/4.0MiB") {
 		t.Errorf("摘要格式不符: %q", out)
 	}
-	printSummary(&sb, nil) // 空集不输出（无 panic 即通过）
+	var sb2 strings.Builder
+	tr.renderAt(&sb2, nil, time.Unix(1001, 0)) // 空集不输出（无 panic 即通过）
+	if sb2.Len() != 0 {
+		t.Errorf("空集应无输出: %q", sb2.String())
+	}
 }
 
 // TestAutoFilename_CD 端到端：无 -o 时输出名取自 Content-Disposition。

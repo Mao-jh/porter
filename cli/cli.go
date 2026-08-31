@@ -15,7 +15,6 @@ import (
 	"errors"
 	"flag"
 	"fmt"
-	gio "io"
 	"net/url"
 	"os"
 	"path"
@@ -319,7 +318,9 @@ func RunMulti(ctx context.Context, opt *Options) error {
 	if opt.Jobs > 0 && opt.Jobs < consumers {
 		consumers = opt.Jobs
 	}
-	// -summary 周期进度摘要（第 14 轮）：读 store 快照，单行/任务，不刷屏
+	// -summary 周期进度摘要（第 14 轮）：读 store 快照，单行/任务，不刷屏。
+	// R19：summaryTracker 差分计算速率与 ETA。
+	tracker := newSummaryTracker()
 	stopSummary := make(chan struct{})
 	summaryExited := make(chan struct{})
 	if opt.Summary {
@@ -334,7 +335,7 @@ func RunMulti(ctx context.Context, opt *Options) error {
 				case <-stopSummary:
 					return
 				case <-tk.C:
-					printSummary(os.Stderr, store.All())
+					tracker.render(os.Stderr, store.All())
 				}
 			}
 		}()
@@ -367,7 +368,7 @@ func RunMulti(ctx context.Context, opt *Options) error {
 	if opt.Summary {
 		close(stopSummary)
 		<-summaryExited
-		printSummary(os.Stderr, store.All()) // 终态快照
+		tracker.render(os.Stderr, store.All()) // 终态快照
 	}
 	close(results)
 
@@ -648,32 +649,6 @@ func runOne(ctx context.Context, fetch network.Fetcher, tr *network.Transport, o
 		fmt.Fprintf(os.Stderr, "[verify] %s(%s)=%s\n", output, verifyAlgo, sum)
 	}
 	return nil
-}
-
-// printSummary 输出任务进度摘要（-summary 周期输出 + 终态快照）。
-// 单行/任务：状态 | 已完成/总大小 (百分比) | 输出名 | URL。按 ID 排序保证稳定。
-func printSummary(w gio.Writer, states []*persist.State) {
-	if len(states) == 0 {
-		return
-	}
-	sort.Slice(states, func(i, j int) bool { return states[i].ID < states[j].ID })
-	for _, st := range states {
-		total := st.FileSize
-		pct := 0.0
-		if total > 0 {
-			pct = float64(st.Done) / float64(total) * 100
-			if pct > 100 {
-				pct = 100
-			}
-		}
-		sizeStr := fmt.Sprintf("%d/%dB", st.Done, total)
-		if total >= 1<<20 || st.Done >= 1<<20 {
-			sizeStr = fmt.Sprintf("%.1f/%.1fMiB", float64(st.Done)/(1<<20), float64(total)/(1<<20))
-		} else if total >= 1<<10 || st.Done >= 1<<10 {
-			sizeStr = fmt.Sprintf("%.1f/%.1fKiB", float64(st.Done)/(1<<10), float64(total)/(1<<10))
-		}
-		fmt.Fprintf(w, "[进度] %-6s %s (%.1f%%)  %s  %s\n", st.Status, sizeStr, pct, st.ID, st.URL)
-	}
 }
 
 // infoSize 安全取文件大小（nil → -1）。

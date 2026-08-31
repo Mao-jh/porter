@@ -391,3 +391,20 @@ github.com/Mao-jh/porter           ← 零第三方依赖保持（第 13 轮未�
   降级为 stderr 警告，不阻断下载。
 - `-o -` 强制单连接顺序流：无分片并行、无断点续传、无完成后校验（stdout 不可寻址，
   与 curl `-o -` 同类取舍）；`-n` 分片与多 URL 同时使用报错。
+
+## 17. 第 19 轮：HTTP/2 显式启用 / -summary 速率与 ETA（真实执行）
+
+> 门禁：`./run_tests.sh`（vet / 单测 / -race / 四套进程级 e2e / 合规检查 + TUI/MCP 模块，
+> 原始输出见 `test_raw.log`）。
+
+### 17.1 新增能力与测试证据
+| 能力 | 实现 | 测试（真实通过） |
+|---|---|---|
+| HTTP/2 显式启用 | `http.Transport.ForceAttemptHTTP2=true`（自定义 DialContext 下自动协商被 net/http 关闭；显式强制后 https 目标可多路复用，6 分片共享一条连接） | `TestTransport_ForceHTTP2`（配置断言）、`TestHTTP2_NegotiationAndMultiplexing`（httptest TLS h2 服务端：6 并发请求全部协商 HTTP/2.0） |
+| `-summary` 速率/ETA | `cli.summaryTracker`：相邻快照差分算速率（B/s 人读格式化），ETA = 剩余/速率（Xs/Xm Ys/Xh Ym）；done 回落钳 0；`renderAt` 时间可注入 | `TestSummaryTracker_SpeedAndETA`（首帧 "-"；10s 增 16MiB → 1.6MiB/s + ETA 20s；回落 → 0B/s + ETA 未知）、`TestFormatETA`、`TestHumanSpeed`、`TestHumanBytes`、`TestSummaryTracker_Empty` |
+
+### 17.2 边界声明（诚实）
+- h2 协商验证需 TLS 信任注入，仅在测试内临时设置 `TLSClientConfig`（产品代码不引入
+  自签名信任面）；生产 https 目标走系统信任链 + ALPN 自动协商。
+- `-summary` 速率/ETA 基于 1s 采样差分：低速长任务首帧无速率（"-"）；任务重启
+  （done 回落）速率钳 0、ETA 显示未知。

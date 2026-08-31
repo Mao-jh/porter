@@ -243,3 +243,13 @@ cli.Run
 - **阶段 1（Linux）**：`GOFLAGS=-mod=readonly GOPROXY=off CGO_ENABLED=0 go build -ldflags="-s -w" ./cmd/downloader`
 - **阶段 2（Windows）**：同命令 + `GOOS=windows GOARCH=amd64`，产出 `.exe`；`dumpbin /dependents` 验证无动态依赖。
 - **零第三方依赖**：`go.mod` 仅 `module downloader` + Go 标准库。
+
+**第 19 轮新增契约（HTTP/2 显式启用 / summary 速率 ETA）**：
+- `Transport`：`http.Transport.ForceAttemptHTTP2 = true`——自定义 DialContext 时
+  net/http 默认不自动协商 h2；显式强制后对 https 目标（h2 服务端）多路复用，
+  6 分片可共享一条连接。测试注入 TLS 信任验证协商（产品代码不引入 TLS 配置面）。
+- `cli.summaryTracker`：相邻 store 快照差分 → 每任务速率（B/s 人读格式化）与
+  ETA（`formatETA`：Xs / Xm Ys / Xh Ym）；`renderAt(w, states, now)` 时间可注入
+  便于测试；`-summary` 周期输出与终态快照均经 tracker。
+- 新测试：`network/h2_test.go`（配置断言 + httptest TLS h2 协商/并发复用）、
+  `cli/round19_test.go`（两帧差分速率/ETA、回落钳 0、格式化用例）。
