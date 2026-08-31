@@ -281,3 +281,66 @@ cli.Run
   `scripts/demo.sh` 一键试用（12 项核心能力演示 + 自动清理，退出码可断言）纳入
   `run_tests.sh` T5；`scripts/mcp_smoke.py` 为 MCP stdio 冒烟（逐条 JSON-RPC、
   `-state-root` 隔离、含 probe 与产物校验）。
+
+**第 23 轮新增契约（链接发现 / 抗劣化 / 下载后处理）**：
+
+### 2.7 discover — 链接发现（新包，零依赖）
+```go
+func FindLinksInPage(ctx, f pageFetcher, pageURL string, max int64, filter ExtFilter) (*PageHits, error)
+func ParsePageLinks(body []byte, pageURL string, filter ExtFilter) *PageHits  // 纯解析（可测）
+type PageHits struct{ Base string; Links []string; Ignored int }
+func ExtractURLs(text string) []string
+func ParseBookmarks(data []byte) []Bookmark
+func ParseTorrent(data []byte) (*Torrent, error)   // bencode 纯标准库；info_hash=SHA1(info 原始字节)
+func ParseMagnet(raw string) (*Magnet, error)       // urn:btih 提取
+```
+- 页面抓取复用 `network.Transport.Get`（H-3 回环边界 / UA / 代理 / Cookie 同源）。
+- 链接提取为**轻量标签属性扫描**（`<a href>`/`<img src>`/`<video src>`/`<source src>`/
+  `<iframe src>`；排除 script/link/style 与页面内部资源）；`<base href>` 优先；
+  相对链接绝对化；`-ext` 过滤。
+- **正则教训（实测踩坑）**：`(?i)` 模式下 RE2 对字符类做 case-fold 闭包——
+  `s↔ſ`(U+017F)、`k↔K`(U+212A) 折叠会让 `[^\x{80}-\x{10FFFF}]` 误排 ASCII 字母；
+  中文文本紧邻 URL 的剥离必须在代码层（TrimRight 非 ASCII 尾字节）完成。
+- bencode 解码保留**原始字节区间**（`bnode.raw`）→ info_hash = SHA1(raw) 逐字节正确
+  （实测与独立 Python 计算一致）；torrent 单/多文件、announce(-list)、url-list(WebSeed)。
+- FTP 列目录：`network.FTPTransport.ListDir`（MLSD 优先、回退 Unix/Windows LIST 解析）；
+  `parseFTPURL` 放宽允许根路径 `/`（目录语义；下载路径仍自然失败）。
+
+### 2.8 抗劣化（cli 层，默认行为不变）
+```go
+// Options 新增
+Mirrors []string      // -mirror 镜像候选
+MinRate int64         // -min-rate 慢速阈值（字节/秒）
+Stall   time.Duration // -stall 停滞超时
+RetryForever bool     // -retry-forever 无限重试
+func runOneWithMirrors(ctx, fetch, tr, opt, urlStr, output, store) error
+func retryForever(ctx, fn func() error) error   // 1s→30s 饱和 ±20% 抖动
+```
+- **镜像 failover**：`runOne` 外层包装；失败按序切换，切换保持字节级续传
+  （镜像大小一致 → 从 .part 断点继续；不一致 → 自动全新下载，runOne 内部守卫）。
+- **慢速/停滞监测**：`downloader.watchQuality` 每 2s 采样，16 点窗口（跨度 30s）
+  平均速率 < minRate → fail；停滞 stall 秒无进度推进 → fail。`progress()` 统计
+  **在途 attempt 已写前缀**（与 `snapshotShards` 同口径，否则运行中恒为 0）。
+- **无限重试**：`retry.Config.Forever` 字段 + `retry.Infinite()`；`runOneWithMirrors`
+  在全部候选失败后按退避从头重试（覆盖探测失败——探测在分片重试循环之外）。
+- 语义边界：用户取消（ctx.Err）不切换不重试；进度已持久化，重启续传。
+
+### 2.9 media — 下载后处理（新包，零依赖核心）
+```go
+func Probe(path string) (*MediaInfo, error)  // MP4/MKV/MP3/FLAC/WAV/JPEG/PNG/GIF 容器头解析
+type MediaInfo struct{ Kind, Codec, Title, Artist string; Duration time.Duration; Width, Height, SampleRate, Channels int; Size int64 }
+func FindFFmpeg() string                     // PATH + 常见安装路径探测
+func Transcode(src string, cfg TranscodeConfig) (string, error)  // ffmpeg 子进程编排
+func Organize(dir string, cfg OrganizeConfig) ([]MovePlan, error) // 归类/去重；只移动不删除
+func Clean(dir string, cfg CleanConfig) (*CleanResult, error)     // 广告/垃圾 → .trash
+```
+- **容器解析（零依赖）**：MP4 box 遍历（mvhd 时长 / tkhd 宽高定点 16.16 / stsd 编码）、
+  MKV EBML 浅解析（Info.duration + Tracks）、MP3（ID3v2 标签 + MPEG 帧头比特率估算）、
+  FLAC streaminfo（20/3/5/36 位域）、WAV（fmt/data）、图像（SOF/IHDR/GIF 头）。
+- **转码诚实降级**：编码超出零依赖范围 → 探测系统 ffmpeg 调用子进程；缺失时
+  明确报错并给 `winget install Gyan.FFmpeg` 等安装指引。
+- **安全语义**：organize/scrub 一律「只移动不删除」；`-dry-run` 打印计划；
+  重复文件入 `.dupes/`、垃圾入 `.trash/`（用户确认后手动清空）。
+- CLI 子命令：`find` / `ls` / `bookmarks` / `extract` / `torrent` /
+  `info` / `transcode` / `organize` / `scrub`（旗标可置于位置参数后——
+  子命令共用 `flagFirst` 前置解析，与主 CLI 同策略）。

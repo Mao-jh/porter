@@ -650,6 +650,12 @@ func parseRetryAfter(v string) time.Duration {
 	return 0
 }
 
+// Get 公开的有界 GET（≤max 字节，超出即错），走完整校验/UA/透传头/重定向策略。
+// 供链接发现（页面抓取）与 HLS 播放列表、AES 密钥、Metalink 元文件等有界元数据拉取使用。
+func (t *Transport) Get(ctx context.Context, urlStr string, max int64) ([]byte, error) {
+	return t.getBounded(ctx, urlStr, max)
+}
+
 // getBounded GET 全文（≤max 字节，超出即错），走完整校验/UA/透传头/重定向策略。
 // 供 HLS 播放列表、AES 密钥、Metalink 元文件等「有界元数据」拉取使用。
 func (t *Transport) getBounded(ctx context.Context, urlStr string, max int64) ([]byte, error) {

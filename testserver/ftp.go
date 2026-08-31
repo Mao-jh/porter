@@ -29,7 +29,15 @@ type FTPServer struct {
 }
 
 // NewFTPServer 启动 FTP 服务端（127.0.0.1 随机端口）。
+// dir 为空时自动创建临时目录（与 HTTP 服务端同兜底，修复空 -dir 全 550）。
 func NewFTPServer(dir string, rate int64) (*FTPServer, error) {
+	if dir == "" {
+		var err error
+		dir, err = os.MkdirTemp("", "dlftp")
+		if err != nil {
+			return nil, err
+		}
+	}
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		return nil, err
@@ -84,6 +92,38 @@ func (s *FTPServer) resolve(p string) (string, error) {
 		return "", fmt.Errorf("路径越界")
 	}
 	return cp, nil
+}
+
+// writeDirListing 将目录内容写入数据连接：mlsd=true 用 RFC 3659 facts 行，
+// 否则用 Unix 风格 LIST（权限/大小/时间）。
+func (s *FTPServer) writeDirListing(dc net.Conn, dir string, mlsd bool) error {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return err
+	}
+	bw := bufio.NewWriter(dc)
+	for _, e := range entries {
+		info, err := e.Info()
+		if err != nil {
+			continue
+		}
+		if mlsd {
+			kind := "file"
+			if e.IsDir() {
+				kind = "dir"
+			}
+			fmt.Fprintf(bw, "type=%s;size=%d;modify=%s; %s\r\n",
+				kind, info.Size(), info.ModTime().Format("20060102150405"), e.Name())
+		} else {
+			perm := "-rw-r--r--"
+			if e.IsDir() {
+				perm = "drwxr-xr-x"
+			}
+			fmt.Fprintf(bw, "%s 1 porter porter %12d %s %s\r\n",
+				perm, info.Size(), info.ModTime().Format("Jan _2 15:04"), e.Name())
+		}
+	}
+	return bw.Flush()
 }
 
 // serveConn 处理一条控制连接（每连接独立会话）。
@@ -176,6 +216,26 @@ func (s *FTPServer) serveConn(conn net.Conn) {
 			}
 			rest = n
 			write("350 resting at %d", n)
+		case "MLSD", "LIST": // 目录列取（porter ls 用；数据连接发送，226 结束）
+			path := s.dir
+			if len(fields) >= 2 && fields[1] != "-a" {
+				if p, rerr := s.resolve(fields[1]); rerr == nil {
+					if info, err := os.Stat(p); err == nil && info.IsDir() {
+						path = p
+					}
+				}
+			}
+			if dataLn == nil {
+				write("425 no data connection")
+				continue
+			}
+			write("150 Opening data connection")
+			dc, err := dataLn.Accept()
+			if err == nil {
+				_ = s.writeDirListing(dc, path, strings.ToUpper(fields[0]) == "MLSD")
+				dc.Close()
+			}
+			write("226 Directory send OK")
 		case "RETR":
 			path := ""
 			if len(fields) >= 2 {

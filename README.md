@@ -43,6 +43,33 @@
 - **早期失败**：下载前磁盘空间预检（跨平台；续传按 `.part` 折算；查询失败降级警告）
 - **故障自愈**：429/5xx/断连/超时指数退避（1s→30s 饱和，±20% 抖动）；尊重 `Retry-After`；
   其余 4xx 不重试
+- **链接发现**（`find` / `ls` / `bookmarks` / `extract` / `torrent`）：
+  - `find <url>` 抓取 HTTP 页面提取可下载链接（相对 URL 绝对化、去重、`-ext` 过滤、
+    `-probe` 探测大小、`-depth` 递归）——对标 yt-dlp 的链接收集，输出可直接喂 `-i`；
+  - `ls <ftp-url>` FTP 目录列取（MLSD 优先，回退 LIST 解析，`-r` 递归全站清单）；
+  - `bookmarks <html>` 解析浏览器书签导出（Netscape 格式，Firefox/Chrome 通用）；
+  - `extract` 从任意文本/日志提取 URL；
+  - `torrent <file.torrent|magnet:...>` 解析种子元数据（bencode 纯标准库实现）：
+    名称/文件清单/**info_hash（SHA1 原始字节，可作磁力校验）**/tracker/**WebSeed 直链**
+    （WebSeed 可直接 `porter <url>` 下载——HTTP 种子接力）；
+    能力边界：不实现 BT 对等协议（零依赖取舍，见 BENCHMARK）。
+- **抗劣化下载**（弱网 / 冷源 / 跨境 / 限速）：
+  - `-mirror u1,u2,...` 镜像 failover：主源失败（断连/超时/5xx/慢速/停滞）按序切镜像，
+    切换保持**字节级续传**（镜像内容一致时从断点继续，实测哈希一致）；
+  - `-min-rate bps` 慢速保护：30s 滑动窗口平均速率低于阈值 → 判坏源切镜像/重试
+    （服务端限速的主动应对，而非傻等）；
+  - `-stall Ns` 停滞超时：N 秒无任何进度推进 → 判坏源（弱网挂死自救）；
+  - `-retry-forever` 无限退避重试（1s→30s 饱和 ±20% 抖动，覆盖探测失败），
+    直到成功或 Ctrl-C（进度已持久化，重启续传）——跨境/冷源场景挂机即走。
+- **下载后处理**（`info` / `transcode` / `organize` / `scrub`）：
+  - `info <file>` 纯 Go 容器解析（零依赖）预览：MP4/MKV/MP3/FLAC/WAV/JPEG/PNG 的
+    时长、分辨率、编码、采样率、ID3 标题（无第三方依赖，秒出）；
+  - `transcode <file> -to mp3|mp4|...` 调用系统 ffmpeg 转码（无 ffmpeg 明确报错并给
+    安装指引——编码不在零依赖范围内，诚实降级）；
+  - `organize <dir>` 按媒体类型归类（video/audio/image/archive/docs）+ 同名防冲突 +
+    `-dedupe` 哈希去重（重复移入 .dupes/）；**只移动不删除**，`-dry-run` 先看计划；
+  - `scrub <dir>` 文件级去广告：`.url/.lnk/.crdownload/.part` 残留与广告说明页
+    （promo/advert/推广 等命名）移入 `.trash/`（播放器内嵌广告不在下载器职责内）。
 - **MCP 插件**：5 个工具（start/status/cancel/list/probe），任何 MCP 客户端即插即用
 - **合规内建**：零遥测零上报；默认 UA 自标识；跨主机凭据剥离；HLS 直播流与 DRM 方法拒绝；
   [SECURITY.md](SECURITY.md) / [COMPLIANCE.md](COMPLIANCE.md) 声明边界，
@@ -126,12 +153,25 @@ porter -i urls.txt -j 4 -summary                     # 批量任务 + 并发上�
 porter url -H "Cookie: session=abc" -n 16            # 透传头 + 16 分片
 porter url -proxy socks5://127.0.0.1:1080            # 代理出口（http/https/socks5）
 porter url -load-cookies cookies.txt                 # Netscape cookie.txt 按域注入
+porter url -mirror u1,u2 -min-rate 102400 -stall 30 -retry-forever   # 抗劣化：镜像/慢速/停滞/无限重试
 porter tasks                                         # 列出持久化任务与历史
 porter rm "out.bin" / porter clean                   # 删除任务 / 清理完成记录
 porter probe http://127.0.0.1:8080/file/big.bin      # 只探测不下载（wget --spider 对标）
 porter meta http://127.0.0.1:8080/file/big.bin       # 查看响应头（curl -I 对标）
+porter http://127.0.0.1:8080/hls/movie.bin.m3u8      # HLS 播放列表（URL 需带完整文件名 <名称>.m3u8，.m3u8 结尾自动识别；AES-128 自动解密）
 porter retry                                         # 续传重跑未完成任务（done 跳过）
 porter url -o - | sha256sum                          # 流式输出到 stdout（curl -o - 对标）
+# —— 链接发现（输出可直接 pipe 给 -i）——
+porter find http://example.com/list.html -ext mp4,mkv -probe -depth 2 > urls.txt
+porter ls ftp://mirror.example.com/pub/ -r          # FTP 全站清单
+porter bookmarks bookmarks.html -out urls.txt       # 浏览器书签导出 → 批量下载
+echo "见 http://x.com/a.mp4" | porter extract -      # 文本提取 URL
+porter torrent movie.torrent                        # 种子解析（info_hash/WebSeed）
+# —— 下载后处理 ——
+porter info movie.mp4                                # 媒体预览：时长/分辨率/编码
+porter transcode song.wav -to mp3                    # ffmpeg 转码（需系统 ffmpeg）
+porter organize ~/Downloads -dedupe -dry-run        # 归类整理（先看计划）
+porter scrub ~/Downloads                            # 广告/垃圾 → .trash
 ```
 
 ### TUI
@@ -165,7 +205,9 @@ porter-mcp -allow-remote     # 或 CLI/TUI 的对应选项
 cmd/porter      CLI 入口          ┐
 tui/cmd/…           TUI 入口          ├─ 三形态共用核心引擎
 mcp/cmd/…           MCP Server 入口   ┘
-cli/                任务协调：范围队列 + 工作窃取 + 断点续传
+cli/                任务协调：范围队列 + 工作窃取 + 断点续传 + 镜像/慢速/停滞抗劣化
+discover/           链接发现：页面链接提取 / FTP 列目录 / 书签 / 文本提取 / bencode 种子解析
+media/              下载后处理：纯 Go 容器解析（info）/ ffmpeg 编排（transcode）/ 归类去重 / 清理
 scheduler/          分片决策（⌈size/8MiB⌉ 收敛 [3,6]）/ 优先级队列 / 重平衡
 network/            协议层：HTTP(S) Range + FTP(S) + HLS(虚拟映射/AES-128)
                     + Metalink4 + file://，Mux 按 scheme 分发，H-3 双层校验
@@ -188,7 +230,10 @@ testserver/         环回测试服务端（Range/故障注入/限速/确定性�
 | 代理 / Cookie / Header | ✅ | ✅ `--all-proxy`/`--load-cookies`/`--header` | ✅ `-proxy`(HTTP/SOCKS5) / `-load-cookies` / `-H` |
 | 批量任务 / 并发上限 | ✅ | ✅ `-i` / `-j` | ✅ `-i urls.txt` / `-j N` |
 | 协议 | HTTP/FTP | HTTP/FTP/SFTP/BT/Metalink | HTTP(S)/FTP(S)/**HLS**/Metalink4/file（SFTP/BT 受零依赖约束，见 BENCHMARK 取舍） |
-| AI 插件 | ✗ | ✗ | ✅ MCP（4 工具） |
+| 链接发现 | — | — | ✅ find/ls/bookmarks/extract/torrent（页面/FTP/书签/文本/种子→WebSeed） |
+| 抗劣化 | 续传 | 重试/镜像（`--all-proxy`） | ✅ 镜像 failover + 慢速/停滞判定 + 无限退避（字节级续传保持） |
+| 后处理 | 打开文件 | 无 | ✅ info（纯 Go 解析）/ transcode（ffmpeg）/ organize / scrub |
+| AI 插件 | ✗ | ✗ | ✅ MCP（5 工具） |
 
 完整对标与差距清单：[BENCHMARK.md](BENCHMARK.md)。性能声明边界：无与第三方同环境对比数据，不做"快 N%"宣称。
 

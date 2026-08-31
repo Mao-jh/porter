@@ -43,6 +43,16 @@ func main() {
 			os.Exit(2)
 		}
 		cfg.Dir = abs
+	} else {
+		// 无 -dir 时预先建临时目录并写入 cfg.Dir：New(cfg) 是值传递，其内部
+		// 兜底 MkdirTemp 只改副本，传回不了——若此处不提前建，HTTP 与 FTP
+		// 会各建各的临时目录（FTP 拿到空目录，SIZE/RETR 全 550）。
+		tmp, err := os.MkdirTemp("", "dltest")
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "创建临时目录失败:", err)
+			os.Exit(2)
+		}
+		cfg.Dir = tmp
 	}
 	s, err := testserver.New(cfg)
 	if err != nil {

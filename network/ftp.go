@@ -70,8 +70,11 @@ func parseFTPURL(raw string, allowRemote bool) (*ftpRequest, error) {
 			return nil, fmt.Errorf("invalid port: %s", p)
 		}
 	}
-	if u.Path == "" || u.Path == "/" {
+	if u.Path == "" {
 		return nil, fmt.Errorf("ftp URL 缺少文件路径")
+	}
+	if u.Path == "/" {
+		// 根路径合法（目录列取）；下载路径 / 会在 SIZE/RETR 阶段自然失败
 	}
 	// 回环强制（H-3）：与 HTTP 路径同规则——IP 字面量直接断言，域名解析结果全量断言。
 	if ip := net.ParseIP(host); ip != nil {
@@ -408,6 +411,187 @@ func parsePASV(msg string) (net.IP, int, error) {
 		return nil, 0, fmt.Errorf("PASV 端口越界")
 	}
 	return net.IP(oct), port, nil
+}
+
+// FTPEntry 目录列取结果条目。
+type FTPEntry struct {
+	Name    string
+	IsDir   bool
+	Size    int64
+	ModTime time.Time // 零值=未知
+}
+
+// ListDir 列取 FTP 目录（MLSD 优先，回退 LIST 解析；均走被动模式数据连接）。
+// urlStr 形如 ftp://host[:port]/dir/（目录路径）；返回条目不含 "." / ".."。
+// 供链接发现（porter ls）使用；同样受 H-3 回环边界约束。
+func (f *FTPTransport) ListDir(ctx context.Context, urlStr string) ([]FTPEntry, error) {
+	req, err := parseFTPURL(urlStr, f.allowRemote)
+	if err != nil {
+		return nil, err
+	}
+	if !strings.HasSuffix(req.path, "/") {
+		req.path += "/"
+	}
+	fc, err := f.dialControl(ctx, req)
+	if err != nil {
+		return nil, err
+	}
+	defer fc.close()
+	if _, _, err := fc.cmd(2, "TYPE A"); err != nil {
+		return nil, err
+	}
+	// MLSD 优先（RFC 3659）：type/size/modify 语义明确；先建被动数据连接
+	//（协议顺序：EPSV/PASV 就绪 → MLSD 150 → 读数据 → 226）。
+	dc, err := fc.openData(ctx, f.allowRemote)
+	if err != nil {
+		return nil, err
+	}
+	if code, _, err := fc.cmd(0, "MLSD %s", req.path); err == nil && code == 150 {
+		data, rerr := io.ReadAll(io.LimitReader(dc, 8<<20))
+		_ = dc.Close()
+		fc.setDeadline(15 * time.Second)
+		fcode, _, ferr := fc.readReply()
+		if rerr != nil {
+			return nil, rerr
+		}
+		_ = fcode
+		_ = ferr
+		entries, perr := parseMLSD(string(data))
+		if perr == nil {
+			return entries, nil
+		}
+		return nil, perr
+	}
+	_ = dc.Close()
+	// LIST 回退（无 MLSD 或失败）：重新建立数据连接执行 LIST。
+	dc2, err := fc.openData(ctx, f.allowRemote)
+	if err != nil {
+		return nil, err
+	}
+	if code, _, err := fc.cmd(0, "LIST %s", req.path); err != nil || code != 150 {
+		_ = dc2.Close()
+		return nil, fmt.Errorf("ftp: MLSD/LIST 均不可用: %v", err)
+	}
+	data, err := io.ReadAll(io.LimitReader(dc2, 8<<20))
+	_ = dc2.Close()
+	fc.setDeadline(15 * time.Second)
+	_, _, _ = fc.readReply() // 消耗最终应答（成败不作为解析依据）
+	if err != nil {
+		return nil, err
+	}
+	return parseLIST(string(data), req.path)
+}
+
+// parseMLSD 解析 RFC 3659 MLSD 应答行：
+// "type=file;size=123;modify=20200101120000; <name>"
+func parseMLSD(data string) ([]FTPEntry, error) {
+	var out []FTPEntry
+	for _, line := range strings.Split(data, "\n") {
+		line = strings.TrimRight(line, "\r")
+		if line == "" {
+			continue
+		}
+		sp := strings.IndexByte(line, ' ')
+		if sp < 0 {
+			continue
+		}
+		facts, name := line[:sp], strings.TrimSpace(line[sp+1:])
+		if name == "." || name == ".." || name == "" {
+			continue
+		}
+		e := FTPEntry{Name: name}
+		for _, kv := range strings.Split(facts, ";") {
+			kv = strings.TrimSpace(kv)
+			if kv == "" {
+				continue
+			}
+			eq := strings.IndexByte(kv, '=')
+			if eq < 0 {
+				continue
+			}
+			k, v := strings.ToLower(kv[:eq]), kv[eq+1:]
+			switch k {
+			case "type":
+				e.IsDir = v == "dir"
+			case "size":
+				if n, err := strconv.ParseInt(v, 10, 64); err == nil && n >= 0 {
+					e.Size = n
+				}
+			case "modify":
+				if t, err := time.Parse("20060102150405", v); err == nil {
+					e.ModTime = t
+				}
+			}
+		}
+		out = append(out, e)
+	}
+	if len(out) == 0 {
+		return nil, fmt.Errorf("ftp: MLSD 无有效条目")
+	}
+	return out, nil
+}
+
+// parseLIST 解析 Unix/Windows 两种常见 LIST 应答形态。basePath 用于判定条目是否目录。
+func parseLIST(data, basePath string) ([]FTPEntry, error) {
+	var out []FTPEntry
+	for _, line := range strings.Split(data, "\n") {
+		line = strings.TrimRight(line, "\r")
+		if line == "" {
+			continue
+		}
+		e, ok := parseLISTLine(line)
+		if !ok {
+			continue
+		}
+		out = append(out, e)
+	}
+	if len(out) == 0 {
+		return nil, fmt.Errorf("ftp: LIST 无有效条目")
+	}
+	return out, nil
+}
+
+// parseLISTLine 解析单行 LIST 应答：Unix（-rw-r--r-- ...）与 Windows（MM-DD-YY hh:mmAM <DIR> ...）。
+func parseLISTLine(line string) (FTPEntry, bool) {
+	// Unix 形态：权限位 10 字符开头（drwxr-xr-x / -rw-r--r-- / lrwxrwxrwx）
+	if len(line) >= 10 && (line[0] == '-' || line[0] == 'd' || line[0] == 'l') {
+		fields := strings.Fields(line)
+		// 至少: 权限 链接数 user group 大小 月 日 时间 名称
+		if len(fields) >= 9 {
+			e := FTPEntry{}
+			e.IsDir = line[0] == 'd'
+			if n, err := strconv.ParseInt(fields[4], 10, 64); err == nil && n >= 0 {
+				e.Size = n
+			}
+			e.ModTime, _ = time.Parse("Jan _2 15:04", fields[5]+" "+fields[6]+" "+fields[7])
+			if _, err := time.Parse("Jan _2 2006", fields[5]+" "+fields[6]+" "+fields[7]); err == nil {
+				e.ModTime, _ = time.Parse("Jan _2 2006", fields[5]+" "+fields[6]+" "+fields[7])
+			}
+			e.Name = strings.Join(fields[8:], " ")
+			if e.Name == "." || e.Name == ".." {
+				return FTPEntry{}, false
+			}
+			return e, true
+		}
+	}
+	// Windows 形态："MM-DD-YY hh:mmAM  <DIR> name" 或 "MM-DD-YY hh:mmAM  123 name"
+	fields := strings.Fields(line)
+	if len(fields) >= 4 && len(fields[0]) == 8 && fields[0][2] == '-' {
+		e := FTPEntry{}
+		if strings.EqualFold(fields[2], "<DIR>") {
+			e.IsDir = true
+			e.Name = strings.Join(fields[3:], " ")
+		} else if n, err := strconv.ParseInt(fields[2], 10, 64); err == nil && n >= 0 {
+			e.Size = n
+			e.Name = strings.Join(fields[3:], " ")
+		}
+		if e.Name == "" || e.Name == "." || e.Name == ".." {
+			return FTPEntry{}, false
+		}
+		e.ModTime, _ = time.Parse("01-02-06 15:04", fields[0]+" "+fields[1])
+		return e, true
+	}
+	return FTPEntry{}, false
 }
 
 // Probe 探测 FTP 资源：SIZE 取大小；REST 0 判定 Range 支持。

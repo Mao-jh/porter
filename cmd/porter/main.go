@@ -95,6 +95,60 @@ func main() {
 				os.Exit(1)
 			}
 			return
+		case "find": // 抓取页面提取可下载链接
+			if err := cli.RunFind(ctx, os.Args[2:]); err != nil {
+				fmt.Fprintln(os.Stderr, "find 失败:", err)
+				os.Exit(1)
+			}
+			return
+		case "ls": // FTP 目录列取
+			if err := cli.RunLS(ctx, os.Args[2:]); err != nil {
+				fmt.Fprintln(os.Stderr, "ls 失败:", err)
+				os.Exit(1)
+			}
+			return
+		case "bookmarks": // 解析浏览器书签导出 HTML
+			if err := cli.RunBookmarks(os.Args[2:]); err != nil {
+				fmt.Fprintln(os.Stderr, "bookmarks 失败:", err)
+				os.Exit(1)
+			}
+			return
+		case "extract": // 从文本提取 URL
+			if err := cli.RunExtract(os.Args[2:]); err != nil {
+				fmt.Fprintln(os.Stderr, "extract 失败:", err)
+				os.Exit(1)
+			}
+			return
+		case "torrent": // 解析 .torrent / 磁力链接
+			if err := cli.RunTorrent(os.Args[2:]); err != nil {
+				fmt.Fprintln(os.Stderr, "torrent 失败:", err)
+				os.Exit(1)
+			}
+			return
+		case "info": // 媒体信息预览
+			if err := cli.RunInfo(os.Args[2:]); err != nil {
+				fmt.Fprintln(os.Stderr, "info 失败:", err)
+				os.Exit(1)
+			}
+			return
+		case "transcode": // ffmpeg 转码
+			if err := cli.RunTranscode(os.Args[2:]); err != nil {
+				fmt.Fprintln(os.Stderr, "transcode 失败:", err)
+				os.Exit(1)
+			}
+			return
+		case "organize": // 按类型归类整理
+			if err := cli.RunOrganize(os.Args[2:]); err != nil {
+				fmt.Fprintln(os.Stderr, "organize 失败:", err)
+				os.Exit(1)
+			}
+			return
+		case "scrub": // 广告/垃圾文件移入 .trash（文件级去广告）
+			if err := cli.RunClean(os.Args[2:]); err != nil {
+				fmt.Fprintln(os.Stderr, "scrub 失败:", err)
+				os.Exit(1)
+			}
+			return
 		}
 	}
 
@@ -109,7 +163,18 @@ func main() {
   porter clean [-state-dir DIR]      # 清理全部 status=done 的完成记录
   porter probe <url> [-proxy URL] [-load-cookies file] [-H "K: V"]  # 只探测不下载
   porter meta <url> [-proxy URL] [-load-cookies file] [-H "K: V"]   # 查看响应头（curl -I 对标）
-  porter retry [-state-dir DIR] [-limit bps] [-proxy URL] [-load-cookies file]  # 续传重跑未完成任务`)
+  porter retry [-state-dir DIR] [-limit bps] [-proxy URL] [-load-cookies file]  # 续传重跑未完成任务
+  链接发现:
+  porter find <page-url> [-ext mp4,mkv] [-probe] [-depth N] [-out urls.txt]     # 页面提取下载链接
+  porter ls <ftp-url> [-l] [-r]                                                 # FTP 目录列取/递归
+  porter bookmarks <bookmarks.html> [-out urls.txt]                             # 浏览器书签导出
+  porter extract <file|-> [-out urls.txt]                                        # 文本中提取 URL
+  porter torrent <file.torrent|magnet:...>                                       # 种子/磁力解析（含 WebSeed）
+  下载后处理:
+  porter info <file>                                                            # 媒体信息预览（时长/分辨率/编码）
+  porter transcode <file> -to mp3|mp4|... [-crf N] [-out dir]                    # ffmpeg 转码（需系统 ffmpeg）
+  porter organize <dir> [-dry-run] [-dedupe]                                     # 按类型归类整理
+  porter scrub <dir> [-dry-run]                                                 # 广告/垃圾文件移入 .trash`)
 		os.Exit(2)
 	}
 	opt, err := cli.Parse(os.Args[1:])

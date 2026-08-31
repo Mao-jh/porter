@@ -66,6 +66,7 @@ func New(cfg Config) (*Server, error) {
 	mux.HandleFunc("/echo", s.handleEcho)
 	mux.HandleFunc("/cd/", s.handleCD)
 	mux.HandleFunc("/redirect", s.handleRedirect)
+	mux.HandleFunc("/page/", s.handlePage) // 链接发现测试页面（第 23 轮）
 	s.registerProtocolRoutes(mux) // HLS/Metalink 端点（第 13 轮）
 	s.mux = mux
 	s.srv = &http.Server{Handler: mux, ReadHeaderTimeout: 5 * time.Second}
@@ -256,6 +257,41 @@ func (t *throttleWriter) Write(p []byte) (int, error) {
 		}
 	}
 	return n, err
+}
+
+// handlePage 返回链接发现测试页面：
+//   /page/        首页：链接到文件/子页/外部（应提取，相对路径绝对化）
+//   /page/sub/    子页：链接到更多文件（递归抓取深度测试）
+// 页面内嵌 script/link（.js/.css）与锚点，验证发现逻辑正确排除。
+func (s *Server) handlePage(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	switch r.URL.Path {
+	case "/page/":
+		fmt.Fprintf(w, `<!DOCTYPE html><html><head><title>Porter test index</title>
+<link rel="stylesheet" href="/page/style.css">
+</head><body>
+<h1>Index</h1>
+<ul>
+<li><a href="/file/big.bin">big.bin</a></li>
+<li><a href="tiny.bin">tiny.bin relative</a></li>
+<li><a href="sub/">sub directory</a></li>
+<li><a href="https://example.com/external.mp4">external</a></li>
+<li><a href="#section2">anchor only</a></li>
+<li><img src="/file/poster.jpg" alt="poster"></li>
+</ul>
+<script src="/page/app.js"></script>
+</body></html>`)
+	case "/page/sub/":
+		fmt.Fprintf(w, `<!DOCTYPE html><html><head><title>Sub</title></head><body>
+<ul>
+<li><a href="/file/tiny.bin">tiny</a></li>
+<li><a href="/meta4/big.bin.meta4">metalink</a></li>
+<li><a href="/hls/big.bin.m3u8">hls playlist</a></li>
+</ul>
+</body></html>`)
+	default:
+		http.NotFound(w, r)
+	}
 }
 
 // handleEcho 回显请求头（k=v 逐行），用于透传头断言。

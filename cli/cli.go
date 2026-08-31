@@ -52,6 +52,12 @@ type Options struct {
 	Summary    bool   // 周期性进度摘要输出到 stderr（第 14 轮）
 
 	Outputs []string // 与 URLs 平行的逐任务输出名（-i 文件 "URL out=name" 行；空串=自动；第 16 轮）
+
+	// 第 23 轮：抗劣化下载（弱网/冷源/跨境/限速）
+	Mirrors     []string      // 镜像候选（逗号分隔；主源失败按序切换，续传语义保持）
+	MinRate     int64         // 慢速保护阈值（字节/秒；>0 时持续 30s 低于阈值 → 判坏源切换）
+	Stall       time.Duration // 响应停滞超时（>0 时 N 秒无进度推进 → 判坏源；默认 0=不启用）
+	RetryForever bool         // 无限退避重试（-retry-forever；配合镜像切换覆盖跨境/冷源场景）
 }
 
 // boolFlags 布尔标志集合：预扫描阶段不把下一个 token 消费为标志值。
@@ -126,6 +132,10 @@ func Parse(args []string) (*Options, error) {
 		ckFile   = fs.String("load-cookies", "", "Netscape cookie.txt 文件路径（按域匹配注入 Cookie 头）")
 		summary  = fs.Bool("summary", false, "每秒输出一次任务进度摘要到 stderr")
 		hdrs     headerList
+		mirror   = fs.String("mirror", "", "镜像候选（逗号分隔）：主源失败/慢速时按序切换（续传语义保持）")
+		minRate  = fs.Int64("min-rate", 0, "慢速保护（字节/秒）：平均速率持续 30s 低于阈值 → 判坏源并切换/重试（0=关闭）")
+		stall    = fs.Int("stall", 0, "停滞超时（秒）：N 秒无进度推进 → 判坏源并切换/重试（0=关闭）")
+		forever  = fs.Bool("retry-forever", false, "可重试错误无限退避重试（跨境/冷源场景，直到成功或 Ctrl-C）")
 	)
 	fs.Var(&hdrs, "H", "透传请求头 \"Key: Value\"（可重复，如 -H \"Cookie: a=b\"）")
 	if err := fs.Parse(args); err != nil {
@@ -165,6 +175,20 @@ func Parse(args []string) (*Options, error) {
 	if err != nil {
 		return nil, err
 	}
+	var mirrors []string
+	for _, m := range strings.Split(*mirror, ",") {
+		m = strings.TrimSpace(m)
+		if m == "" {
+			continue
+		}
+		if !startsWithAny(m, "http://", "https://", "ftp://", "ftps://") {
+			return nil, fmt.Errorf("非法镜像 URL: %s", m)
+		}
+		mirrors = append(mirrors, m)
+	}
+	if *stall < 0 || *minRate < 0 {
+		return nil, fmt.Errorf("非法抗劣化参数（stall/min-rate 应 ≥0）")
+	}
 	m := scheduler.ModeDefault
 	switch *mode {
 	case "default", "":
@@ -194,6 +218,11 @@ func Parse(args []string) (*Options, error) {
 		CookieFile: *ckFile,
 		Summary:    *summary,
 		Outputs:    outs,
+
+		Mirrors:      mirrors,
+		MinRate:      *minRate,
+		Stall:        time.Duration(*stall) * time.Second,
+		RetryForever: *forever,
 	}, nil
 }
 
@@ -354,7 +383,7 @@ func RunMulti(ctx context.Context, opt *Options) error {
 					if ctxErr := ctx.Err(); ctxErr != nil {
 						rerr = ctxErr // 上下文已取消：剩余任务统一记为取消，不再发起
 					} else {
-						rerr = runOne(ctx, fetch, tr, opt, t.URL, t.ID, store)
+						rerr = runOneWithMirrors(ctx, fetch, tr, opt, t.URL, t.ID, store)
 						if rerr == nil {
 							fmt.Fprintf(os.Stderr, "[%s] 完成 <- %s\n", t.ID, t.URL)
 						}
@@ -578,6 +607,12 @@ func runOne(ctx context.Context, fetch network.Fetcher, tr *network.Transport, o
 	defer sf.Abort() // 未 Commit 前保证清理
 
 	d := newDownloader(dlFetch, urlStr, sf, plan)
+	// 第 23 轮：抗劣化参数注入（慢速/停滞监测 + 无限重试）
+	d.minRate = opt.MinRate
+	d.stall = opt.Stall
+	if opt.RetryForever {
+		d.retryC = retry.Infinite()
+	}
 
 	// 周期性进度持久化（stop 关闭后协程退出，保证无泄漏）
 	stopFlush := make(chan struct{})
@@ -607,8 +642,17 @@ func runOne(ctx context.Context, fetch network.Fetcher, tr *network.Transport, o
 	}
 	close(stopFlush)
 	<-flushExited
+	// HLS 加密流探测返回 size=0（播放列表长度不可预知，见 network/hls.go Probe）：
+	// 下载完成后用 .part 真实大小回填，供 tasks 展示（修复加密任务 0/0B 的展示缺陷；
+	// HLS 完整性由传输层虚拟映射 + 流式 sha256 保证，分片守卫不适用）。
+	isHLS := network.IsHLSURL(urlStr)
+	if size == 0 && isHLS {
+		if info, err := os.Stat(output + ".part"); err == nil && info.Size() > 0 {
+			size = info.Size()
+		}
+	}
 	// 覆盖守卫：已知大小时每分片必须完整覆盖（防任务静默丢失产生空洞文件）
-	if size > 0 {
+	if size > 0 && !isHLS {
 		for _, ss := range d.snapshotShards() {
 			if ss.End > 0 && ss.Done != ss.End-ss.Start {
 				return fmt.Errorf("分片覆盖不完整: [%d,%d) Done=%d", ss.Start, ss.End, ss.Done)
@@ -617,8 +661,8 @@ func runOne(ctx context.Context, fetch network.Fetcher, tr *network.Transport, o
 	}
 	flushState(store, output, urlStr, size, d.snapshotShards(), "running")
 
-	// 大小守卫：分片覆盖不变量在文件系统层面的最终校验
-	if size > 0 {
+	// 大小守卫：分片覆盖不变量在文件系统层面的最终校验（HLS 跳过：size 为后回填展示值）
+	if size > 0 && !isHLS {
 		if info, err := os.Stat(output + ".part"); err != nil || info.Size() != size {
 			return fmt.Errorf("分片覆盖校验失败: 期望 %d 字节, 实际 %d（err=%v）", size, infoSize(info), err)
 		}
@@ -778,6 +822,10 @@ type downloader struct {
 	sf     *io.SparseFile
 	retryC *retry.Config
 
+	// 第 23 轮：抗劣化（慢速/停滞监测；>0 生效，0=关闭）
+	minRate int64
+	stall   time.Duration
+
 	mu       sync.Mutex
 	cond     *sync.Cond
 	queue    []rangeTask
@@ -841,17 +889,101 @@ func (d *downloader) run(ctx context.Context) error {
 		case <-runDone:
 		}
 	}()
+	// 第 23 轮：慢速/停滞监测——持续低速率或长时间无进度 → 判坏源（fail 触发
+	// 上层镜像切换或重试）。仅在任一阈值开启时启动。
+	stopWatch := make(chan struct{})
+	watchExited := make(chan struct{})
+	if d.minRate > 0 || d.stall > 0 {
+		go func() {
+			defer close(watchExited)
+			d.watchQuality(ctx, stopWatch)
+		}()
+	}
 	for i := 0; i < workers; i++ {
 		d.wg.Add(1)
 		go d.worker(ctx)
 	}
 	d.wg.Wait()
+	close(stopWatch)
+	if d.minRate > 0 || d.stall > 0 {
+		<-watchExited
+	}
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	if d.failed != nil {
 		return d.failed
 	}
 	return ctx.Err()
+}
+
+// watchQuality 周期性评估下载质量：慢速（30s 滑动窗口平均 < minRate）或
+// 停滞（stall 秒无任何进度推进）→ fail 本次尝试（进度已持久化，可续传/切源）。
+// 采样点：每 2s 一个；窗口保留最近 15 点（30s）。
+func (d *downloader) watchQuality(ctx context.Context, stop <-chan struct{}) {
+	const (
+		sampleEvery  = 2 * time.Second
+		qualityWindow = 30 * time.Second
+	)
+	type point struct {
+		t int64 // UnixNano
+		b int64 // 已完成字节
+	}
+	points := make([]point, 0, 17)
+	tk := time.NewTicker(sampleEvery)
+	defer tk.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-stop:
+			return
+		case <-tk.C:
+			done := d.progress()
+			now := time.Now().UnixNano()
+			points = append(points, point{t: now, b: done})
+			if len(points) > 16 { // 16 点跨度 = 30s（首点 0s，末点 30s）
+				points = points[len(points)-16:]
+			}
+			// 停滞：自最新进度点起 stall 秒无推进
+			if d.stall > 0 && len(points) > 1 {
+				last := points[len(points)-2]
+				if done == last.b && now-last.t >= int64(d.stall) {
+					d.fail(fmt.Errorf("下载停滞 %v 无进度（stall 阈值 %v，已下载 %d 字节）",
+						time.Duration(now-last.t), d.stall, done))
+					return
+				}
+			}
+			// 慢速：窗口（≥30s）首尾字节差 / 窗口时长
+			if d.minRate > 0 && len(points) >= 2 {
+				first, last := points[0], points[len(points)-1]
+				elapsed := last.t - first.t
+				if elapsed >= int64(qualityWindow) {
+					rate := float64(last.b-first.b) * 1e9 / float64(elapsed)
+					if rate < float64(d.minRate) {
+						d.fail(fmt.Errorf("平均速率 %.0f B/s 低于慢速阈值 %d B/s（30s 窗口，已下载 %d 字节）",
+							rate, d.minRate, done))
+						return
+					}
+				}
+			}
+		}
+	}
+}
+
+// progress 汇总全部已覆盖字节（含在途 attempt 已写前缀；快照，供慢速/停滞监测用）。
+func (d *downloader) progress() int64 {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	var total int64
+	for _, sp := range d.prog {
+		total += sp.covered()
+	}
+	for at := range d.attempts {
+		if w := at.written.Load(); w > 0 {
+			total += w // 在途分片已写前缀（可能轻微重叠，监控用途近似即可）
+		}
+	}
+	return total
 }
 
 // fail 记录致命失败并关闭引擎（取消全部在途尝试）。

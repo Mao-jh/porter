@@ -10,10 +10,11 @@ import (
 // Config 重试配置。并发安全：抖动随机数取自全局并发安全源，
 // 同一 Config 可被多个下载工作协程共享（-race 验证）。
 type Config struct {
-	Base   time.Duration // 初始退避（默认 1s）
-	Max    time.Duration // 上限（默认 30s）
-	MaxTry int           // 最大尝试次数；0 = 无限（建议调用方设上限）
-	Jitter float64       // 抖动幅度 0~1（默认 0.2）
+	Base    time.Duration // 初始退避（默认 1s）
+	Max     time.Duration // 上限（默认 30s）
+	MaxTry  int           // 最大尝试次数；0 = 无限（建议调用方设上限）
+	Jitter  float64       // 抖动幅度 0~1（默认 0.2）
+	Forever bool          // 无限重试（-retry-forever：跨境/冷源场景，直到成功或取消）
 }
 
 // Default 返回默认配置（来源：§2 决策「1s→2s→4s… 上限30s」）。
@@ -23,6 +24,17 @@ func Default() *Config {
 		Max:    30 * time.Second,
 		MaxTry: 8,
 		Jitter: 0.2,
+	}
+}
+
+// Infinite 返回无限重试配置（-retry-forever：只要可重试就持续退避直到成功）。
+func Infinite() *Config {
+	return &Config{
+		Base:    time.Second,
+		Max:     30 * time.Second,
+		MaxTry:  0,
+		Jitter:  0.2,
+		Forever: true,
 	}
 }
 
@@ -56,10 +68,11 @@ func (c *Config) Backoff(attempt int) time.Duration {
 	return d
 }
 
-// Do 对 fn 执行重试，直到成功或达到 MaxTry。fn 返回 (retryable, error)：retryable=false 立即放弃。
+// Do 对 fn 执行重试，直到成功或达到 MaxTry（Forever=true 时仅受 retryable 约束）。
+// fn 返回 (retryable, error)：retryable=false 立即放弃。
 func (c *Config) Do(fn func(attempt int) (retryable bool, err error)) error {
 	cfg := c
-	if cfg.MaxTry <= 0 {
+	if !cfg.Forever && cfg.MaxTry <= 0 {
 		cfg.MaxTry = 8
 	}
 	for i := 0; ; i++ {
@@ -67,7 +80,7 @@ func (c *Config) Do(fn func(attempt int) (retryable bool, err error)) error {
 		if err == nil {
 			return nil
 		}
-		if !retryable || (cfg.MaxTry > 0 && i+1 >= cfg.MaxTry) {
+		if !retryable || (!cfg.Forever && cfg.MaxTry > 0 && i+1 >= cfg.MaxTry) {
 			return err
 		}
 		time.Sleep(cfg.Backoff(i))
