@@ -196,13 +196,14 @@ func (d *Downloader) Start(urlStr, outputDir string, limitBps int64) (DownloadSt
 		limit = d.cfg.Limit
 	}
 	opt := cli.Options{
-		URLs:       []string{urlStr},
-		Output:     output,
-		StateDir:   stateDir,
-		Limit:      limit,
-		Verify:     hash.Algorithm(verifyAlgo(d.cfg.Verify)),
-		Proxy:      d.cfg.Proxy,
-		CookieFile: d.cfg.CookieFile,
+		URLs:        []string{urlStr},
+		Output:      output,
+		StateDir:    stateDir,
+		Limit:       limit,
+		Verify:      hash.Algorithm(verifyAlgo(d.cfg.Verify)),
+		Proxy:       d.cfg.Proxy,
+		CookieFile:  d.cfg.CookieFile,
+		AllowRemote: d.cfg.AllowRemote, // 第 27 轮：下载引擎与 probe 同边界（此前仅 probe 放行，下载仍被 H-3 拒）
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	t := &task{

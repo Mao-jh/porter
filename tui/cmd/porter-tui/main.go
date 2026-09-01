@@ -5,9 +5,10 @@
 //	downloader-tui [-state-dir DIR] [-limit bps] [-verify algo] [-mode default|max] [-n shards]
 //	               [-url URL]... [-out DIR] [-selftest]
 //
-// 交互：a 添加任务 / ↑↓ 选择 / p 暂停·继续 / d 删除 / x 配置代理出口 / q 退出。
-// 安全边界 (H-3)：默认仅允许回环地址；公网链接需显式代理（-proxy 或界面内按 x），
-// 设置代理即视为允许出站。
+// 交互：a 添加任务 / s 设置 / ↑↓ 选择 / p 暂停·继续 / d 删除 / x 配置代理 / q 退出。
+// 粘贴：Ctrl+V（或终端自带右键/Ctrl+Shift+V）。
+// 安全边界：TUI 面向人类用户，默认放行公网（AllowRemote=true，第 27 轮用户裁决）；
+// CLI/MCP 仍默认仅回环（MCP 用 -allow-remote 显式放行，CLI 用 -proxy）。
 // --selftest：无头模式（预置 -url 自动下载，全部终态后自动退出，退出码 0=全部成功）。
 package main
 
@@ -44,11 +45,12 @@ func main() {
 	flag.Parse()
 
 	base := cli.Options{
-		StateDir:   *stateDir,
-		Limit:      *limit,
-		Shards:     *shards,
-		Proxy:      *proxy,
-		CookieFile: *ckFile,
+		StateDir:    *stateDir,
+		Limit:       *limit,
+		Shards:      *shards,
+		Proxy:       *proxy,
+		CookieFile:  *ckFile,
+		AllowRemote: true, // 人类用户终端：默认放行公网（第 27 轮用户裁决；CLI/MCP 仍默认回环）
 	}
 	switch *verify {
 	case "none":

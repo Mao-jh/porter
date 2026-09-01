@@ -18,12 +18,15 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/Mao-jh/porter/cli"
+	"github.com/Mao-jh/porter/hash"
 	"github.com/Mao-jh/porter/persist"
 
+	"github.com/atotto/clipboard"
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 )
@@ -110,12 +113,42 @@ type Model struct {
 	height   int
 	status   string
 	errMsg   string
+	// 设置面板（s 打开）：常用预设优先，自定义补全。
+	settings      bool // 面板打开
+	settingRow    int  // 0=限速 1=分片 2=校验 3=代理
+	settingCustom bool // 自定义值输入中（复用 input）
 	// Selftest 由 --selftest 置位：全部任务到达终态后自动退出（无头验收）。
 	Selftest bool
 	// QuitReason 退出原因（selftest 用于判定退出码：ok/failed/user）。
 	QuitReason string
 	quitting   bool
 }
+
+// ---- 设置面板档位（常用场景优先，末尾"自定义…"进输入） ----
+
+// speedPresets 限速档位值（字节/秒；0=不限）。
+var speedPresets = []int64{0, 1 << 20, 5 << 20, 10 << 20}
+
+// speedLabels 与 speedPresets 平行，末尾恒为自定义入口。
+var speedLabels = []string{"不限", "1MiB/s", "5MiB/s", "10MiB/s", "自定义…"}
+
+// shardPresets 分片档位（0=自动）。
+var shardPresets = []int{0, 1, 4, 8, 16}
+
+var shardLabels = []string{"自动", "1", "4", "8", "16", "自定义…"}
+
+// verifyPresets 校验算法档位（""=不校验）。
+var verifyPresets = []string{"sha256", "sha1", "md5", ""}
+
+var verifyLabels = []string{"sha256", "sha1", "md5", "不校验", "自定义…"}
+
+// proxyPresets 代理档位（""=直连）。
+var proxyPresets = []string{"", "http://127.0.0.1:7890", "socks5://127.0.0.1:1080"}
+
+var proxyLabels = []string{"直连", "http://127.0.0.1:7890", "socks5://127.0.0.1:1080", "自定义…"}
+
+// settingRowNames 设置面板行名。
+var settingRowNames = []string{"限速", "分片", "校验", "代理"}
 
 // urlPlaceholder 任务 URL 输入框占位。
 const urlPlaceholder = "http://127.0.0.1/file/x.bin"
@@ -257,12 +290,16 @@ func isCanceled(err error) bool {
 }
 
 func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	if m.adding || m.proxying {
+	// 输入模式：URL 添加 / 代理配置 / 设置自定义值
+	if m.adding || m.proxying || m.settingCustom {
 		switch msg.Type {
 		case tea.KeyEnter:
 			raw := strings.TrimSpace(m.input.Value())
-			if m.proxying {
+			switch {
+			case m.proxying:
 				return m.finishProxy(raw)
+			case m.settingCustom:
+				return m.finishCustom(raw)
 			}
 			m.adding = false
 			m.input.Blur()
@@ -284,16 +321,28 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			t.start(m.baseOpt)
 			return m, nil
 		case tea.KeyEsc:
-			m.adding = false
-			m.proxying = false
+			m.adding, m.proxying, m.settingCustom = false, false, false
 			m.input.Blur()
 			m.input.SetValue("")
 			m.input.Placeholder = urlPlaceholder
+			return m, nil
+		case tea.KeyCtrlV:
+			if txt, ok := pasteText(); ok && txt != "" {
+				m.input.SetValue(m.input.Value() + txt)
+				m.input.CursorEnd()
+			} else {
+				m.errMsg = "剪贴板不可读（也可用终端粘贴：Ctrl+Shift+V 或右键）"
+			}
 			return m, nil
 		}
 		var cmd tea.Cmd
 		m.input, cmd = m.input.Update(msg)
 		return m, cmd
+	}
+
+	// 设置面板（无输入焦点时的导航）
+	if m.settings {
+		return m.handleSettingKey(msg)
 	}
 
 	switch msg.Type {
@@ -333,6 +382,11 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.input.SetValue("")
 		m.input.Placeholder = "http://host:port 或 socks5://host:port（设置即视为允许公网出站）"
 		return m, textinput.Blink
+	case "s":
+		m.settings = true
+		m.settingRow = 0
+		m.errMsg = ""
+		return m, nil
 	case "p":
 		if len(m.tasks) == 0 || m.cursor >= len(m.tasks) {
 			return m, nil
@@ -366,6 +420,238 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+// handleSettingKey 设置面板按键：↑/↓ 选择行，Enter/空格/→ 切换档位，
+// 档位落到"自定义…"进入输入；q/Esc 关闭。
+func (m Model) handleSettingKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.Type {
+	case tea.KeyCtrlC:
+		m.quitting = true
+		m.QuitReason = "user"
+		m.cancelAll()
+		return m, tea.Quit
+	case tea.KeyUp:
+		if m.settingRow > 0 {
+			m.settingRow--
+		}
+		return m, nil
+	case tea.KeyDown:
+		if m.settingRow < len(settingRowNames)-1 {
+			m.settingRow++
+		}
+		return m, nil
+	case tea.KeyEnter:
+		return m.cycleSetting()
+	case tea.KeyEsc:
+		m.settings = false
+		m.status = ""
+		return m, nil
+	}
+	switch msg.String() {
+	case "q":
+		m.settings = false
+		m.status = ""
+		return m, nil
+	case " ", "right": // 空格/右箭头同样切换档位
+		return m.cycleSetting()
+	}
+	return m, nil
+}
+
+// cycleSetting 当前行切到下一档；切到"自定义…"时进入自定义输入。
+func (m Model) cycleSetting() (tea.Model, tea.Cmd) {
+	// 找到当前值所在档位索引；不在预设（自定义值）→ 视为下一档起点
+	next := 0
+	switch m.settingRow {
+	case 0: // 限速
+		cur := indexOf(speedPresets, m.baseOpt.Limit)
+		next = cur + 1
+		if next < len(speedPresets) {
+			m.baseOpt.Limit = speedPresets[next]
+			return m, nil
+		}
+	case 1: // 分片
+		cur := indexOf(shardPresets, m.baseOpt.Shards)
+		next = cur + 1
+		if next < len(shardPresets) {
+			m.baseOpt.Shards = shardPresets[next]
+			return m, nil
+		}
+	case 2: // 校验
+		cur := indexOf(verifyPresets, string(m.baseOpt.Verify))
+		next = cur + 1
+		if next < len(verifyPresets) {
+			m.baseOpt.Verify = hashAlgo(verifyPresets[next])
+			return m, nil
+		}
+	case 3: // 代理
+		cur := indexOf(proxyPresets, m.baseOpt.Proxy)
+		next = cur + 1
+		if next < len(proxyPresets) {
+			m.baseOpt.Proxy = proxyPresets[next]
+			if proxyPresets[next] == "" {
+				m.errMsg = ""
+			}
+			return m, nil
+		}
+	}
+	// 走到末尾 → 自定义输入
+	m.settingCustom = true
+	m.input.Focus()
+	m.input.SetValue("")
+	switch m.settingRow {
+	case 0:
+		m.input.Placeholder = "如 5M / 1024k / 1048576（0=不限）"
+	case 1:
+		m.input.Placeholder = "1..16（0=自动）"
+	case 2:
+		m.input.Placeholder = "sha256 / sha1 / md5 / none"
+	case 3:
+		m.input.Placeholder = "http://host:port / socks5://host:port（空=直连）"
+	}
+	return m, textinput.Blink
+}
+
+// indexOf 返回 v 在预设中的索引；不存在返回 -1。
+func indexOf[T comparable](presets []T, v T) int {
+	for i, p := range presets {
+		if p == v {
+			return i
+		}
+	}
+	return -1
+}
+
+// finishCustom 提交设置自定义值（Enter）：按当前行校验并写入 baseOpt。
+func (m Model) finishCustom(raw string) (tea.Model, tea.Cmd) {
+	row := m.settingRow
+	m.settingCustom = false
+	m.input.Blur()
+	m.input.SetValue("")
+	m.input.Placeholder = urlPlaceholder
+	switch row {
+	case 0: // 限速
+		v, err := parseSpeed(raw)
+		if err != nil {
+			m.errMsg = err.Error()
+			return m, nil
+		}
+		m.baseOpt.Limit = v
+		m.status = "限速已设为 " + speedLabel(v)
+	case 1: // 分片
+		v, err := parseShards(raw)
+		if err != nil {
+			m.errMsg = err.Error()
+			return m, nil
+		}
+		m.baseOpt.Shards = v
+		m.status = "分片已设为 " + shardLabel(v)
+	case 2: // 校验
+		algo := strings.ToLower(strings.TrimSpace(raw))
+		switch algo {
+		case "", "none":
+			m.baseOpt.Verify = ""
+		case "sha256", "sha1", "md5":
+			m.baseOpt.Verify = hashAlgo(algo)
+		default:
+			m.errMsg = "校验算法: sha256 / sha1 / md5 / none"
+			return m, nil
+		}
+		m.status = "校验已设为 " + verifyLabel(string(m.baseOpt.Verify))
+	case 3: // 代理
+		raw = strings.TrimSpace(raw)
+		if raw != "" && !strings.HasPrefix(raw, "http://") && !strings.HasPrefix(raw, "https://") &&
+			!strings.HasPrefix(raw, "socks5://") {
+			m.errMsg = "代理格式: http://host:port / https://host:port / socks5://host:port（空=直连）"
+			return m, nil
+		}
+		m.baseOpt.Proxy = raw
+		if raw == "" {
+			m.status = "代理已清除（直连）"
+		} else {
+			m.status = "代理出口 " + raw
+		}
+	}
+	m.errMsg = ""
+	return m, nil
+}
+
+// speedLabel / shardLabel / verifyLabel 值 → 显示标签（自定义值时回显原值）。
+func speedLabel(v int64) string {
+	if i := indexOf(speedPresets, v); i >= 0 {
+		return speedLabels[i]
+	}
+	return humanBytes(v) + "/s"
+}
+
+func shardLabel(v int) string {
+	if i := indexOf(shardPresets, v); i >= 0 {
+		return shardLabels[i]
+	}
+	return fmt.Sprintf("%d", v)
+}
+
+func verifyLabel(v string) string {
+	if i := indexOf(verifyPresets, v); i >= 0 {
+		return verifyLabels[i]
+	}
+	return v
+}
+
+// hashAlgo 字符串 → hash.Algorithm（hash 包类型转换）。
+func hashAlgo(s string) hash.Algorithm { return hash.Algorithm(s) }
+
+// parseSpeed 解析限速输入：支持 k/K/M/G 后缀（二进制，如 5M=5MiB）；裸数字=字节/秒。
+func parseSpeed(raw string) (int64, error) {
+	s := strings.TrimSpace(raw)
+	if s == "" {
+		return 0, nil
+	}
+	mult := int64(1)
+	switch s[len(s)-1] {
+	case 'k', 'K':
+		mult, s = 1<<10, s[:len(s)-1]
+	case 'm', 'M':
+		mult, s = 1<<20, s[:len(s)-1]
+	case 'g', 'G':
+		mult, s = 1<<30, s[:len(s)-1]
+	}
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return 0, fmt.Errorf("限速格式: 如 5M / 1024k / 1048576（0=不限）")
+	}
+	v, err := strconv.ParseInt(s, 10, 64)
+	if err != nil || v < 0 {
+		return 0, fmt.Errorf("限速格式: 如 5M / 1024k / 1048576（0=不限）")
+	}
+	if v > (1<<63-1)/mult {
+		return 0, fmt.Errorf("限速值过大")
+	}
+	return v * mult, nil
+}
+
+// parseShards 解析分片数：0=自动，1..16。
+func parseShards(raw string) (int, error) {
+	s := strings.TrimSpace(raw)
+	if s == "" {
+		return 0, nil
+	}
+	v, err := strconv.Atoi(s)
+	if err != nil || v < 0 || v > 16 {
+		return 0, fmt.Errorf("分片数: 0..16（0=自动）")
+	}
+	return v, nil
+}
+
+// pasteText 读取系统剪贴板文本（可替换以便测试）。Windows 纯 syscall；
+// Linux 需 xclip/wl-paste 等外部程序，缺失时返回 false（终端自带粘贴兜底）。
+var pasteText = func() (string, bool) {
+	txt, err := clipboard.ReadAll()
+	if err != nil || txt == "" {
+		return "", false
+	}
+	return txt, true
+}
+
 // finishProxy 提交代理配置（Enter）：空值清除代理；非空校验前缀并生效。
 // 与 CLI -proxy 同语义：显式设置代理即视为允许公网出站（network 层自动放行）。
 // 生效范围：之后新添加的任务与按 p 重试的任务（t.start 时读取 baseOpt）。
@@ -376,7 +662,7 @@ func (m Model) finishProxy(raw string) (tea.Model, tea.Cmd) {
 	m.input.Placeholder = urlPlaceholder
 	if raw == "" {
 		m.baseOpt.Proxy = ""
-		m.status = "代理已清除（恢复默认：仅允许回环地址，公网链接将失败）"
+		m.status = "代理已清除（直连）"
 		return m, nil
 	}
 	if !strings.HasPrefix(raw, "http://") && !strings.HasPrefix(raw, "https://") &&
@@ -386,7 +672,7 @@ func (m Model) finishProxy(raw string) (tea.Model, tea.Cmd) {
 	}
 	m.baseOpt.Proxy = raw
 	m.errMsg = ""
-	m.status = "代理出口 " + raw + "（公网放行；新任务与按 p 重试生效）"
+	m.status = "代理出口 " + raw + "（新任务与按 p 重试生效）"
 	return m, nil
 }
 

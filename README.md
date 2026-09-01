@@ -176,10 +176,16 @@ porter scrub ~/Downloads                            # 广告/垃圾 → .trash
 
 ### TUI
 ```bash
-porter-tui                        # 交互界面：a 添加 / x 代理出口 / p 暂停·继续 / d 删除 / q 退出（按键大小写均可）
+porter-tui                        # 交互界面：a 添加 / x 代理出口 / s 设置 / p 暂停·继续 / d 删除 / q 退出（按键大小写均可）
 porter-tui --selftest -url URL    # 无头自检（CI 用）
-porter-tui -proxy socks5://127.0.0.1:1080 -load-cookies cookies.txt   # 代理/Cookie 同样适用（公网链接需代理放行，或界面内按 x）
+porter-tui -proxy socks5://127.0.0.1:1080 -load-cookies cookies.txt   # 代理/Cookie 同样适用
 ```
+- **面向人类默认公网放行**：TUI 是交互界面（第一用户是人），默认允许公网目标，无需代理即可下载；
+  代理仍可在界面内按 `x` 配置（如无代理出口的受限环境）。
+- **Ctrl+V 直接粘贴**：URL 输入框支持 Ctrl+V（Windows 终端也兼容），无需右键菜单选粘贴。
+- **`s` 设置面板**：常用场景一键切换——速度档（不限/1MiB/5MiB/10MiB/自定义）、
+  分片数（自动/1/4/8/16/自定义）、校验算法（sha256/sha1/md5/不校验/自定义）、
+  代理（直连/常见本地代理端口/自定义）；Enter/空格 确认，`esc` 返回。
 
 ### MCP
 ```bash
@@ -193,11 +199,13 @@ porter-mcp -state-root .porter-mcp    # stdio 传输，挂进任意 MCP 客户�
 
 ```bash
 porter-mcp -allow-remote              # MCP 服务端的产品开关（仅 MCP 有此参数）
-porter <url> -proxy http://host:port  # CLI/TUI 无 -allow-remote；公网目标需显式 -proxy 放行
+porter-tui                            # TUI 以人类为第一用户，默认允许公网目标
+porter <url> -proxy http://host:port  # CLI 面向脚本/管道，无 -allow-remote；公网目标需显式 -proxy 放行
 ```
 
 打开后即为常规下载器行为；默认关闭时，任何非回环目标在连接层被拒绝。
-`-proxy` 是 CLI/TUI 唯一的公网放行通道（设置代理即视为显式允许出站），MCP 两者皆可。
+`-proxy` 是 CLI 唯一的公网放行通道（设置代理即视为显式允许出站），MCP 两者皆可；
+TUI 默认放行，代理仅作可选项。
 安全政策与漏洞报告渠道：[SECURITY.md](SECURITY.md)；
 隐私（零遥测）、合法使用边界与协议行为自律：[COMPLIANCE.md](COMPLIANCE.md)。
 

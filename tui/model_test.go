@@ -430,8 +430,8 @@ func TestH3RefusalHint(t *testing.T) {
 func TestViewHelpLine(t *testing.T) {
 	m := newTestModel(t)
 	v := m.View()
-	if !strings.Contains(v, "x:代理出口") {
-		t.Fatalf("帮助行应含 x:代理出口\n---\n%s", v)
+	if !strings.Contains(v, "s:设置") || !strings.Contains(v, "x:代理") {
+		t.Fatalf("帮助行应含 s:设置 与 x:代理\n---\n%s", v)
 	}
 	// 代理输入行
 	km, _ := m.Update(keyRunes("x"))
@@ -447,5 +447,158 @@ func TestViewHelpLine(t *testing.T) {
 	v = m2.View()
 	if !strings.Contains(v, "安全边界拒绝(H-3)") {
 		t.Fatalf("H-3 失败行尾应显示短标签\n---\n%s", v)
+	}
+}
+
+// TestSettingsFlow 设置面板：s 打开 → 档位切换 → 自定义输入 → Esc 关闭。
+func TestSettingsFlow(t *testing.T) {
+	m := newTestModel(t)
+	km, _ := m.Update(keyRunes("s"))
+	m = km.(Model)
+	if !m.settings || m.settingRow != 0 {
+		t.Fatal("按 s 应打开设置面板并定位限速行")
+	}
+	// 限速档位循环：0(不限) → 1MiB/s
+	km, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = km.(Model)
+	if m.baseOpt.Limit != 1<<20 {
+		t.Fatalf("限速应切到 1MiB/s, got %d", m.baseOpt.Limit)
+	}
+	// 继续切到 5MiB/s → 10MiB/s → 自定义输入
+	km, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = km.(Model)
+	km, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = km.(Model)
+	km, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = km.(Model)
+	if !m.settingCustom {
+		t.Fatal("切过全部档位后应进入自定义输入")
+	}
+	m.input.SetValue("5M")
+	km, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = km.(Model)
+	if m.settingCustom {
+		t.Fatal("自定义提交后应退出输入")
+	}
+	if m.baseOpt.Limit != 5<<20 {
+		t.Fatalf("自定义限速 5M 应=5MiB, got %d", m.baseOpt.Limit)
+	}
+	// 分片行：↓ → Enter → 1 片
+	km, _ = m.Update(tea.KeyMsg{Type: tea.KeyDown})
+	m = km.(Model)
+	if m.settingRow != 1 {
+		t.Fatalf("↓ 应到分片行, got %d", m.settingRow)
+	}
+	km, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = km.(Model)
+	if m.baseOpt.Shards != 1 {
+		t.Fatalf("分片应切到 1, got %d", m.baseOpt.Shards)
+	}
+	// 校验行：先置 sha256（预设档 0），↓ → Enter → sha1
+	m.baseOpt.Verify = "sha256"
+	km, _ = m.Update(tea.KeyMsg{Type: tea.KeyDown})
+	m = km.(Model)
+	km, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = km.(Model)
+	if string(m.baseOpt.Verify) != "sha1" {
+		t.Fatalf("校验应切到 sha1, got %q", m.baseOpt.Verify)
+	}
+	// 代理行：↓ → Enter → http://127.0.0.1:7890
+	km, _ = m.Update(tea.KeyMsg{Type: tea.KeyDown})
+	m = km.(Model)
+	km, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = km.(Model)
+	if m.baseOpt.Proxy != "http://127.0.0.1:7890" {
+		t.Fatalf("代理应切到预设, got %q", m.baseOpt.Proxy)
+	}
+	// q 关闭
+	km, _ = m.Update(keyRunes("q"))
+	m = km.(Model)
+	if m.settings {
+		t.Fatal("q 应关闭设置面板")
+	}
+}
+
+// TestSettingsRender 设置面板渲染断言（档位高亮/自定义值回显）。
+func TestSettingsRender(t *testing.T) {
+	m := newTestModel(t)
+	km, _ := m.Update(keyRunes("s"))
+	m = km.(Model)
+	v := m.View()
+	for _, want := range []string{"限速", "分片", "校验", "代理", "自定义…", "[不限]", "q/Esc:关闭"} {
+		if !strings.Contains(v, want) {
+			t.Errorf("设置面板缺少 %q\n---\n%s", want, v)
+		}
+	}
+	// 自定义值回显：设一个预设外的限速再打开设置
+	m2 := newTestModel(t)
+	m2.baseOpt.Limit = 3 << 20
+	m2.baseOpt.Proxy = "socks5://127.0.0.1:9999"
+	km, _ = m2.Update(keyRunes("s"))
+	m2 = km.(Model)
+	v = m2.View()
+	if !strings.Contains(v, "[自定义…]") || !strings.Contains(v, "3.0MB/s") {
+		t.Fatalf("自定义值应高亮自定义档并回显\n---\n%s", v)
+	}
+}
+
+// TestPasteCtrlV Ctrl+V 从剪贴板读入输入框（替换 pasteText 隔离系统剪贴板）。
+func TestPasteCtrlV(t *testing.T) {
+	orig := pasteText
+	defer func() { pasteText = orig }()
+	pasteText = func() (string, bool) { return "https://example.com/a.bin", true }
+
+	m := newTestModel(t)
+	km, _ := m.Update(keyRunes("a"))
+	m = km.(Model)
+	km, _ = m.Update(tea.KeyMsg{Type: tea.KeyCtrlV})
+	m = km.(Model)
+	if got := m.input.Value(); got != "https://example.com/a.bin" {
+		t.Fatalf("Ctrl+V 应粘贴剪贴板内容, got %q", got)
+	}
+	// 剪贴板不可读 → 提示且不清空已有输入
+	pasteText = func() (string, bool) { return "", false }
+	m.input.SetValue("http://127.0.0.1/x")
+	km, _ = m.Update(tea.KeyMsg{Type: tea.KeyCtrlV})
+	m = km.(Model)
+	if m.input.Value() != "http://127.0.0.1/x" {
+		t.Fatal("剪贴板不可读时不应改动输入")
+	}
+	if !strings.Contains(m.errMsg, "剪贴板") {
+		t.Fatalf("应有剪贴板提示, got %q", m.errMsg)
+	}
+}
+
+// TestParseSpeed 限速解析：后缀/裸数字/非法。
+func TestParseSpeed(t *testing.T) {
+	cases := map[string]int64{
+		"": 0, "0": 0, "5M": 5 << 20, "5m": 5 << 20,
+		"1024k": 1 << 20, "1G": 1 << 30, "1048576": 1 << 20,
+	}
+	for in, want := range cases {
+		got, err := parseSpeed(in)
+		if err != nil || got != want {
+			t.Errorf("parseSpeed(%q)=%d,%v want %d", in, got, err, want)
+		}
+	}
+	for _, bad := range []string{"abc", "-1", "5X", "9999999999999999999999"} {
+		if _, err := parseSpeed(bad); err == nil {
+			t.Errorf("parseSpeed(%q) 应报错", bad)
+		}
+	}
+}
+
+// TestParseShards 分片解析。
+func TestParseShards(t *testing.T) {
+	if v, err := parseShards(""); err != nil || v != 0 {
+		t.Fatalf("空应=0(自动), got %d,%v", v, err)
+	}
+	if v, err := parseShards("8"); err != nil || v != 8 {
+		t.Fatalf("8 应=8, got %d,%v", v, err)
+	}
+	for _, bad := range []string{"17", "-1", "abc"} {
+		if _, err := parseShards(bad); err == nil {
+			t.Errorf("parseShards(%q) 应报错", bad)
+		}
 	}
 }

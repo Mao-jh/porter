@@ -74,7 +74,7 @@ func RunRetry(ctx context.Context, opt *Options) error {
 	}
 	sort.Slice(pending, func(i, j int) bool { return pending[i].UpdatedAt < pending[j].UpdatedAt })
 
-	tr, _, err := buildTransport(opt, false)
+	tr, _, err := buildTransport(opt, opt.AllowRemote)
 	if err != nil {
 		return err
 	}
@@ -82,7 +82,7 @@ func RunRetry(ctx context.Context, opt *Options) error {
 	if opt.Proxy != "" {
 		fmt.Fprintf(os.Stderr, "[proxy] 出口 %s（远程目标已随代理显式放行）\n", opt.Proxy)
 	}
-	fetch := network.NewMux(tr, false)
+	fetch := network.NewMux(tr, opt.AllowRemote)
 
 	var errs []error
 	for _, st := range pending {

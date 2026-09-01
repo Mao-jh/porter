@@ -20,10 +20,13 @@ var (
 )
 
 // helpLine 快捷键帮助（常驻，不受动态 status 影响）。
-const helpLine = "a:添加任务  x:代理出口  p:暂停/继续  d:删除  q:退出  ↑/↓:选择"
+const helpLine = "a:添加任务  x:代理  s:设置  p:暂停/继续  d:删除  q:退出  ↑/↓:选择"
 
 // View 渲染整个界面（纯字符串，可测试断言）。
 func (m Model) View() string {
+	if m.settings {
+		return m.renderSettings()
+	}
 	var b strings.Builder
 	if m.status != "" {
 		b.WriteString(styleHeader.Render("downloader-tui  ") + styleDim.Render(m.status))
@@ -40,6 +43,8 @@ func (m Model) View() string {
 		b.WriteString("代理出口> " + m.input.View() + "\n")
 	case m.adding:
 		b.WriteString("新增 URL> " + m.input.View() + "\n")
+	case m.settingCustom:
+		b.WriteString("自定义值> " + m.input.View() + "\n")
 	}
 
 	barWidth := 24
@@ -151,4 +156,62 @@ func formatETA(secs int64) string {
 	default:
 		return fmt.Sprintf("%ds", s)
 	}
+}
+
+// renderSettings 设置面板：常用预设优先，自定义补全。
+// 每行 [当前档位] 高亮；自定义值（不在预设）时高亮"自定义…"并回显实际值。
+func (m Model) renderSettings() string {
+	var b strings.Builder
+	b.WriteString(styleHeader.Render("设置  ") +
+		styleDim.Render("Enter/空格:切换档位  ↑/↓:选择  q/Esc:关闭") + "\n")
+	if m.errMsg != "" {
+		b.WriteString(styleErr.Render("提示: " + m.errMsg) + "\n")
+	}
+	if m.settingCustom {
+		b.WriteString(styleDim.Render("自定义值> ") + m.input.View() + "\n\n")
+	} else {
+		b.WriteString("\n")
+	}
+	rows := []struct {
+		name   string
+		labels []string
+		cur    int
+	}{
+		{settingRowNames[0], speedLabels, indexOf(speedPresets, m.baseOpt.Limit)},
+		{settingRowNames[1], shardLabels, indexOf(shardPresets, m.baseOpt.Shards)},
+		{settingRowNames[2], verifyLabels, indexOf(verifyPresets, string(m.baseOpt.Verify))},
+		{settingRowNames[3], proxyLabels, indexOf(proxyPresets, m.baseOpt.Proxy)},
+	}
+	for i, r := range rows {
+		prefix := "  "
+		if i == m.settingRow {
+			prefix = styleCursor.Render("> ")
+		}
+		b.WriteString(prefix + fmt.Sprintf("%-4s", r.name) + " ")
+		highlight := r.cur
+		if highlight < 0 { // 自定义值：高亮"自定义…"档
+			highlight = len(r.labels) - 1
+		}
+		for j, lbl := range r.labels {
+			if j == highlight {
+				b.WriteString("[" + styleCursor.Render(lbl) + "]")
+			} else {
+				b.WriteString(lbl)
+			}
+			if j < len(r.labels)-1 {
+				b.WriteString(" ")
+			}
+		}
+		if r.cur < 0 {
+			extra := map[int]string{
+				0: "(" + humanBytes(m.baseOpt.Limit) + "/s)",
+				1: fmt.Sprintf("(%d)", m.baseOpt.Shards),
+				2: "(" + string(m.baseOpt.Verify) + ")",
+				3: "(" + m.baseOpt.Proxy + ")",
+			}
+			b.WriteString(" " + styleDim.Render(extra[i]))
+		}
+		b.WriteString("\n")
+	}
+	return b.String()
 }

@@ -51,6 +51,11 @@ type Options struct {
 	CookieFile string // Netscape cookie.txt 路径（空=不加载；第 14 轮）
 	Summary    bool   // 周期性进度摘要输出到 stderr（第 14 轮）
 
+	// AllowRemote 允许非回环目标（H-3 产品开关，默认 false=仅回环）。
+	// 三形态边界：CLI 默认 false（-proxy 放行）；MCP 由 -allow-remote 显式置位；
+	// TUI 人类用户默认 true（第 27 轮用户裁决：人类终端无需回环限制）。
+	AllowRemote bool
+
 	Outputs []string // 与 URLs 平行的逐任务输出名（-i 文件 "URL out=name" 行；空串=自动；第 16 轮）
 
 	// 第 23 轮：抗劣化下载（弱网/冷源/跨境/限速）
@@ -293,7 +298,7 @@ func RunMulti(ctx context.Context, opt *Options) error {
 	//（若每任务独立 Transport，-limit 会变成"每任务限额"而非全局限额）。
 	// 单一共享 Transport：全局限速配额由所有任务/分片共同消耗
 	//（若每任务独立 Transport，-limit 会变成"每任务限额"而非全局限额）。
-	tr, nCookies, err := buildTransport(opt, false)
+	tr, nCookies, err := buildTransport(opt, opt.AllowRemote)
 	if err != nil {
 		return err
 	}
@@ -306,7 +311,7 @@ func RunMulti(ctx context.Context, opt *Options) error {
 		fmt.Fprintf(os.Stderr, "[cookies] 已加载 %d 条（按域匹配）\n", nCookies)
 	}
 	// 协议分发：http(s) → tr，ftp(s) → FTP 传输层（共享同一限速配额，H-3 同边界）。
-	fetch := network.NewMux(tr, false)
+	fetch := network.NewMux(tr, opt.AllowRemote)
 	outs := deriveOutputs(opt.URLs)
 	// -i 文件 "out=name" 逐任务命名优先于自动推导（第 16 轮；净化已在 readURLFile 完成）
 	for i := range outs {

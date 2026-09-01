@@ -4,7 +4,7 @@ description: 使用 Porter 多线程下载器（HTTP/FTP/HLS/Metalink4/file 协�
 license: MIT
 metadata:
   author: Mao-jh
-  version: "1.2"
+  version: "1.3"
 agent_created: true
 ---
 
@@ -72,12 +72,15 @@ echo "见 http://x.com/a.mp4" | "$PORTER" extract -
 
 ## 关键行为与陷阱（实测确认）
 
-1. **默认仅允许回环目标（H-3 强制）**：CLI 无 `-allow-remote` 参数（README 说法不准确）。
+1. **默认仅允许回环目标（H-3 强制，CLI 适用）**：CLI 无 `-allow-remote` 参数（README 说法不准确）。
    公网 URL 会被拒绝：`host ... resolves to non-loopback ... (H-3)`。
    唯一放行公网的方式：**显式指定 `-proxy`**（http/https/socks5），设置代理即视为允许出站。
    MCP 服务端另有 `-allow-remote` 开关。
-   **TUI 界面内**：按 `x` 直接输入代理地址（Enter 生效 / 空值清除 / Esc 取消），新任务与按 `p` 重试生效，
-   无需重启；公网任务失败时界面会提示该入口。TUI 按键大小写均可（大写 A/X/P/D/Q 同效）。
+   **TUI 例外——默认公网放行**：TUI 以人类为第一用户，默认允许公网目标直接下载；
+   代理仍可在界面内按 `x` 输入（Enter 生效 / 空值清除 / Esc 取消），受限环境按 `p` 重试生效，无需重启。
+   TUI 按键大小写均可（大写 A/X/S/P/D/Q 同效）。
+   **TUI 界面键位**：`a` 添加任务（URL 输入框支持 **Ctrl+V 直接粘贴**）、`x` 代理、`s` 设置面板
+   （速度/分片数/校验算法/代理 常用档位 + 自定义补全，Enter/空格 确认）、`p` 暂停/继续、`d` 删除、`q` 退出。
 2. **输出目录必须已存在**：不自动创建，`-o` 目录不存在直接失败（与 curl 一致）。
 3. **Windows 路径陷阱**：Git Bash 下 `/tmp/xxx` 传给原生 exe 会被解析为 `\tmp\xxx` 而失败。
    一律用 Windows 格式：`-o C:/Users/31423/Desktop/deliverable/out/file.bin`。
