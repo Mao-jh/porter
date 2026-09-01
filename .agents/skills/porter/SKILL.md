@@ -81,6 +81,13 @@ echo "见 http://x.com/a.mp4" | "$PORTER" extract -
    TUI 按键大小写均可（大写 A/X/S/P/D/Q 同效）。
    **TUI 界面键位**：`a` 添加任务（URL 输入框支持 **Ctrl+V 直接粘贴**）、`x` 代理、`s` 设置面板
    （速度/分片数/校验算法/代理 常用档位 + 自定义补全，Enter/空格 确认）、`p` 暂停/继续、`d` 删除、`q` 退出。
+   **TUI 鼠标交互（R32，需支持鼠标序列的终端如 Windows Terminal）**：点击任务行选中、
+   点行尾 `[暂停]/[继续]/[删除]` 按钮直接操作、滚轮上下选择；输入/设置面板内鼠标忽略防误触。
+   鼠标热区是 package 级 lastFrame（View 重建、Update 命中），依赖 bubbletea 单线程事件循环。
+   **TUI 显示增强（R33）**：任务列表按「失败 → 暂停 → 进行中/排队 → 完成」稳定排序（仅显示层，
+   Model 顺序与 cursor 语义不变）；顶部汇总行显示活动数/总速/总进度（仅统计已知大小任务）；
+   点击失败行展开完整错误详情（cleanErr 单行化后整行渲染，再点收起），行尾错误短标签
+   必须先 cleanErr 再 trunc，否则错误里的换行会把任务行断成两行。
 2. **输出目录必须已存在**：不自动创建，`-o` 目录不存在直接失败（与 curl 一致）。
 3. **Windows 路径陷阱**：Git Bash 下 `/tmp/xxx` 传给原生 exe 会被解析为 `\tmp\xxx` 而失败。
    一律用 Windows 格式：`-o C:/Users/31423/Desktop/deliverable/out/file.bin`。

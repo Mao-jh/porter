@@ -122,6 +122,8 @@ type Model struct {
 	// QuitReason 退出原因（selftest 用于判定退出码：ok/failed/user）。
 	QuitReason string
 	quitting   bool
+	// expandedErr 展开错误详情的任务索引（-1=无；点击失败行 toggle，R33）。
+	expandedErr int
 }
 
 // ---- 设置面板档位（常用场景优先，末尾"自定义…"进输入） ----
@@ -158,9 +160,10 @@ func New(baseOpt cli.Options) Model {
 	ti := textinput.New()
 	ti.Placeholder = urlPlaceholder
 	return Model{
-		input:   ti,
-		baseOpt: baseOpt,
-		status:  "",
+		input:       ti,
+		baseOpt:     baseOpt,
+		status:      "",
+		expandedErr: -1,
 	}
 }
 
@@ -278,8 +281,117 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case tea.KeyMsg:
 		return m.handleKey(msg)
+
+	case tea.MouseMsg:
+		return m.handleMouse(msg)
 	}
 	return m, nil
+}
+
+// handleMouse 鼠标交互（R32 起）：
+//   - 左键点击：命中行尾操作按钮（[暂停/继续] [删除]）→ 执行；否则命中任务行 → 选中；
+//   - 滚轮：上下移动选中行（等价 ↑/↓）；
+//   - 输入/设置面板内忽略鼠标（保持键盘为主，避免误触）。
+//
+// 热区 lastFrame 由 View 每帧重建（Bubble Tea 单线程事件循环串行访问，无锁安全）。
+func (m Model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
+	if m.adding || m.proxying || m.settingCustom || m.settings {
+		return m, nil
+	}
+	if tea.MouseEvent(msg).IsWheel() {
+		switch msg.Button {
+		case tea.MouseButtonWheelUp:
+			if m.cursor > 0 {
+				m.cursor--
+			}
+		case tea.MouseButtonWheelDown:
+			if m.cursor < len(m.tasks)-1 {
+				m.cursor++
+			}
+		}
+		return m, nil
+	}
+	// 只响应左键释放（完整的"点击"语义，避开按下即拖动）
+	if msg.Action != tea.MouseActionRelease || msg.Button != tea.MouseButtonLeft {
+		return m, nil
+	}
+	if z := hitZone(lastFrame.buttons, msg.X, msg.Y); z != nil {
+		return m.activateZone(*z)
+	}
+	if z := hitZone(lastFrame.rows, msg.X, msg.Y); z != nil {
+		return m.activateZone(*z)
+	}
+	return m, nil
+}
+
+// activateZone 按热区动作分发（与键盘 p/d 共用同一套任务操作，行为一致）。
+func (m Model) activateZone(z clickZone) (tea.Model, tea.Cmd) {
+	switch z.action {
+	case "select":
+		if z.rowIdx >= 0 && z.rowIdx < len(m.tasks) {
+			m.cursor = z.rowIdx
+			// 点击失败/出错行：展开/收起完整错误详情（R33）
+			if m.tasks[z.rowIdx].Err != nil {
+				if m.expandedErr == z.rowIdx {
+					m.expandedErr = -1
+				} else {
+					m.expandedErr = z.rowIdx
+				}
+			}
+		}
+		return m, nil
+	case "pause":
+		return m.pauseTask(z.rowIdx)
+	case "resume":
+		return m.resumeTask(z.rowIdx)
+	case "delete":
+		return m.deleteTask(z.rowIdx)
+	}
+	return m, nil
+}
+
+// pauseTask 暂停任务（与键盘 p 的"暂停"分支同语义：取消引擎，落盘后转 paused）。
+func (m Model) pauseTask(i int) (tea.Model, tea.Cmd) {
+	if i < 0 || i >= len(m.tasks) {
+		return m, nil
+	}
+	t := m.tasks[i]
+	if t.State == StateRunning && t.cancel != nil {
+		t.cancel()
+		m.status = "暂停中（等待引擎落盘）…"
+	}
+	return m, nil
+}
+
+// resumeTask 继续/重试任务（paused/failed/queued → running，重启引擎）。
+func (m Model) resumeTask(i int) (tea.Model, tea.Cmd) {
+	if i < 0 || i >= len(m.tasks) {
+		return m, nil
+	}
+	t := m.tasks[i]
+	switch t.State {
+	case StatePaused, StateFailed, StateQueued:
+		t.State = StateRunning
+		t.Err = nil
+		t.start(m.baseOpt)
+	}
+	return m, nil
+}
+
+// deleteTask 删除任务：取消引擎、清理 state 子目录、移除列表项（与键盘 d 同语义）。
+func (m Model) deleteTask(i int) (tea.Model, tea.Cmd) {
+	if i < 0 || i >= len(m.tasks) {
+		return m, nil
+	}
+	t := m.tasks[i]
+	if t.cancel != nil {
+		t.cancel()
+	}
+	dir := t.taskStateDir(m.baseOpt.StateDir)
+	return m, func() tea.Msg {
+		_ = os.RemoveAll(dir)
+		return taskRemovedMsg{output: t.Output}
+	}
 }
 
 func isCanceled(err error) bool {
@@ -391,31 +503,17 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if len(m.tasks) == 0 || m.cursor >= len(m.tasks) {
 			return m, nil
 		}
-		t := m.tasks[m.cursor]
-		switch t.State {
-		case StateRunning: // 暂停：取消引擎（taskDoneMsg 会转为 paused）
-			if t.cancel != nil {
-				t.cancel()
-			}
-			m.status = "暂停中（等待引擎落盘）…"
+		switch m.tasks[m.cursor].State {
+		case StateRunning: // 暂停：取消引擎（drainDone 会转为 paused）
+			return m.pauseTask(m.cursor)
 		case StatePaused, StateFailed, StateQueued: // 继续/重试/启动
-			t.State = StateRunning
-			t.Err = nil
-			t.start(m.baseOpt)
+			return m.resumeTask(m.cursor)
 		}
 	case "d":
 		if len(m.tasks) == 0 || m.cursor >= len(m.tasks) {
 			return m, nil
 		}
-		t := m.tasks[m.cursor]
-		if t.cancel != nil {
-			t.cancel()
-		}
-		dir := t.taskStateDir(m.baseOpt.StateDir)
-		return m, func() tea.Msg {
-			_ = os.RemoveAll(dir)
-			return taskRemovedMsg{output: t.Output}
-		}
+		return m.deleteTask(m.cursor)
 	}
 	return m, nil
 }

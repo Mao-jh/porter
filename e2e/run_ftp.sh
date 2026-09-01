@@ -15,10 +15,15 @@ SIZE=$((64*1024*1024))  # 64 MiB
 echo "=== [F1] 启动 testserver.exe -ftp（HTTP+FTP 同目录 64MiB 模式文件；每连接限速 2MiB/s，6 分片聚合 ≈12MiB/s，保证 1.5s 中断确定性） ==="
 "$BIN/testserver.exe" -ftp -limit 2097152 -dir "$DATA" -name big.bin -size $SIZE > ts_ftp.log 2>&1 &
 TS_PID=$!
-sleep 1
+# 轮询等待 ftpurl 就绪（Windows 下进程首次启动/端口绑定/日志 flush 可能超过 1s，固定 sleep 会偶发失败）
+FTP_URL=""
+for _ in $(seq 1 20); do
+  FTP_URL=$(grep '^ftpurl=' ts_ftp.log 2>/dev/null | cut -d= -f2-)
+  [ -n "$FTP_URL" ] && break
+  sleep 0.5
+done
 cat ts_ftp.log
-FTP_URL=$(grep '^ftpurl=' ts_ftp.log | cut -d= -f2-)
-[ -n "$FTP_URL" ] || { echo "未取得 ftpurl"; exit 1; }
+[ -n "$FTP_URL" ] || { echo "未取得 ftpurl"; kill $TS_PID 2>/dev/null || true; exit 1; }
 echo "FTP_URL=$FTP_URL"
 
 echo "=== [F2] 源文件 sha256 ==="

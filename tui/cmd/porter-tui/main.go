@@ -90,7 +90,8 @@ func main() {
 		}
 	}
 
-	p := tea.NewProgram(m, tea.WithAltScreen())
+	// WithMouseCellMotion：启用鼠标（点击行/按钮、滚轮选择，R32 起）
+	p := tea.NewProgram(m, tea.WithAltScreen(), tea.WithMouseCellMotion())
 	if *selftest {
 		// 无头：键盘无输入，输出丢弃
 		p = tea.NewProgram(m, tea.WithInput(nil), tea.WithOutput(io.Discard))

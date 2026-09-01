@@ -602,3 +602,390 @@ func TestParseShards(t *testing.T) {
 		}
 	}
 }
+
+// ---- 鼠标交互（R32 起） ----
+
+// findZone 返回第一个匹配 action 的热区（测试辅助）。
+func findZone(zones []clickZone, action string) *clickZone {
+	for i := range zones {
+		if zones[i].action == action {
+			return &zones[i]
+		}
+	}
+	return nil
+}
+
+func mouseClick(x, y int) tea.MouseMsg {
+	return tea.MouseMsg{Action: tea.MouseActionRelease, Button: tea.MouseButtonLeft, X: x, Y: y}
+}
+
+// TestViewRowButtons 行尾按钮渲染：running → [暂停][删除]，done → 仅 [删除]。
+func TestViewRowButtons(t *testing.T) {
+	m := newTestModel(t)
+	m.tasks = []*Task{
+		{URL: "u", Output: "run.bin", State: StateRunning},
+		{URL: "u", Output: "ok.bin", State: StateDone},
+	}
+	v := m.View()
+	if !strings.Contains(v, "[暂停]") || !strings.Contains(v, "[删除]") {
+		t.Fatalf("running 行应含 [暂停] [删除]\n---\n%s", v)
+	}
+	if strings.Contains(v, "[继续]") {
+		t.Fatal("running 行不应含 [继续]")
+	}
+}
+
+// TestButtonPosFixed 按钮区固定在最左侧：不同任务（参数/进度差异巨大）的按钮 x 坐标一致，
+// 不随文件名/进度条/字节数等参数左右跳动（R32 用户反馈的跳动问题回归测试）。
+func TestButtonPosFixed(t *testing.T) {
+	m := newTestModel(t)
+	m.tasks = []*Task{
+		{URL: "u", Output: "a.bin", State: StateRunning, Size: 100, Done: 1, Speed: 1, ETA: 90},
+		{URL: "u", Output: "very-long-filename-xxxxxxxxxxxx.bin", State: StateRunning,
+			Size: 10 << 30, Done: 5 << 30, Speed: 9 << 20, ETA: 3600},
+		{URL: "u", Output: "c.bin", State: StateDone, Size: 100, Done: 100},
+	}
+	m.View()
+	// 两个 running 行的 [暂停] 按钮 x 应恒为 4（左边框1 + padding1 + cursor2）
+	for _, want := range []struct {
+		rowIdx int
+		x      int
+	}{{0, 4}, {1, 4}} {
+		z := findZoneAt(lastFrame.buttons, "pause", want.rowIdx)
+		if z == nil {
+			t.Fatalf("rowIdx=%d 应有 [暂停] 按钮", want.rowIdx)
+		}
+		if z.start != want.x {
+			t.Errorf("rowIdx=%d [暂停] x=%d want %d（按钮应固定在行首，不随参数跳动）", want.rowIdx, z.start, want.x)
+		}
+	}
+	// running 行（双按钮）的 [删除] 恒为 11（4 + 6 + 空格 1）；done 行（单按钮）恒为 4
+	for _, want := range []struct {
+		rowIdx int
+		x      int
+	}{{0, 11}, {1, 11}, {2, 4}} {
+		z := findZoneAt(lastFrame.buttons, "delete", want.rowIdx)
+		if z == nil {
+			t.Fatalf("rowIdx=%d 应有 [删除] 按钮", want.rowIdx)
+		}
+		if z.start != want.x {
+			t.Errorf("rowIdx=%d [删除] x=%d want %d", want.rowIdx, z.start, want.x)
+		}
+	}
+}
+
+// findZoneAt 返回指定 rowIdx 且 action 匹配的热区（测试辅助）。
+func findZoneAt(zones []clickZone, action string, rowIdx int) *clickZone {
+	for i := range zones {
+		if zones[i].action == action && zones[i].rowIdx == rowIdx {
+			return &zones[i]
+		}
+	}
+	return nil
+}
+
+// TestMouseSelectRow 点击任务行 → 选中。
+func TestMouseSelectRow(t *testing.T) {
+	m := newTestModel(t)
+	m.tasks = []*Task{
+		{URL: "u", Output: "a.bin", State: StateDone},
+		{URL: "u", Output: "b.bin", State: StateDone},
+		{URL: "u", Output: "c.bin", State: StateDone},
+	}
+	m.cursor = 0
+	m.View()
+	var rowY, rowX int
+	found := false
+	for _, rz := range lastFrame.rows {
+		if rz.rowIdx == 1 {
+			rowY, rowX, found = rz.y, rz.start+1, true
+			break
+		}
+	}
+	if !found {
+		t.Fatal("应记录第 2 行选中热区")
+	}
+	km, _ := m.Update(mouseClick(rowX, rowY))
+	m = km.(Model)
+	if m.cursor != 1 {
+		t.Fatalf("点击第 2 行应选中, got %d", m.cursor)
+	}
+	// 点击第 0 行
+	for _, rz := range lastFrame.rows {
+		if rz.rowIdx == 0 {
+			km, _ = m.Update(mouseClick(rz.start+1, rz.y))
+			m = km.(Model)
+			break
+		}
+	}
+	if m.cursor != 0 {
+		t.Fatalf("点击第 1 行应选中, got %d", m.cursor)
+	}
+}
+
+// TestMouseWheel 滚轮上下移动选中行（含边界）。
+func TestMouseWheel(t *testing.T) {
+	m := newTestModel(t)
+	m.tasks = []*Task{
+		{URL: "u", Output: "a.bin", State: StateDone},
+		{URL: "u", Output: "b.bin", State: StateDone},
+		{URL: "u", Output: "c.bin", State: StateDone},
+	}
+	m.cursor = 1
+	km, _ := m.Update(tea.MouseMsg{Action: tea.MouseActionPress, Button: tea.MouseButtonWheelUp})
+	m = km.(Model)
+	if m.cursor != 0 {
+		t.Fatalf("滚轮上应选中上一行, got %d", m.cursor)
+	}
+	km, _ = m.Update(tea.MouseMsg{Action: tea.MouseActionPress, Button: tea.MouseButtonWheelUp})
+	m = km.(Model)
+	if m.cursor != 0 {
+		t.Fatal("顶部滚轮上应保持 0")
+	}
+	km, _ = m.Update(tea.MouseMsg{Action: tea.MouseActionPress, Button: tea.MouseButtonWheelDown})
+	m = km.(Model)
+	km, _ = m.Update(tea.MouseMsg{Action: tea.MouseActionPress, Button: tea.MouseButtonWheelDown})
+	m = km.(Model)
+	km, _ = m.Update(tea.MouseMsg{Action: tea.MouseActionPress, Button: tea.MouseButtonWheelDown})
+	m = km.(Model)
+	if m.cursor != 2 {
+		t.Fatalf("底部滚轮下应停在最后一行, got %d", m.cursor)
+	}
+}
+
+// TestMousePauseResumeButton 点击 [暂停] → 引擎取消落盘 → paused；再点 [继续] → running。
+func TestMousePauseResumeButton(t *testing.T) {
+	m := newTestModel(t)
+	km, _ := m.Update(keyRunes("a"))
+	m = km.(Model)
+	m.input.SetValue("http://127.0.0.1/dir/pause.bin")
+	km, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = km.(Model)
+	if len(m.tasks) != 1 || m.tasks[0].cancel == nil {
+		t.Fatal("任务应已启动")
+	}
+	// 渲染并点 [暂停]
+	m.View()
+	z := findZone(lastFrame.buttons, "pause")
+	if z == nil {
+		t.Fatal("running 任务应渲染 [暂停] 按钮")
+	}
+	km, _ = m.Update(mouseClick(z.start+1, z.y))
+	m = km.(Model)
+	// 等待引擎退出（只读确认，值放回 channel 交给 drainDone 消费，保证走真实状态迁移路径）
+	select {
+	case err := <-m.tasks[0].doneCh:
+		m.tasks[0].doneCh <- err
+	case <-time.After(10 * time.Second):
+		t.Fatal("引擎未在 10s 内退出")
+	}
+	m.drainDone()
+	if m.tasks[0].State != StatePaused {
+		t.Fatalf("点 [暂停] 后应 paused, got %v", m.tasks[0].State)
+	}
+	// 点 [继续] 重启
+	m.View()
+	z = findZone(lastFrame.buttons, "resume")
+	if z == nil {
+		t.Fatal("paused 任务应渲染 [继续] 按钮")
+	}
+	km, _ = m.Update(mouseClick(z.start+1, z.y))
+	m = km.(Model)
+	if m.tasks[0].State != StateRunning {
+		t.Fatalf("点 [继续] 后应 running, got %v", m.tasks[0].State)
+	}
+	// 清理：取消并等待引擎退出
+	m.tasks[0].cancel()
+	select {
+	case <-m.tasks[0].doneCh:
+	case <-time.After(10 * time.Second):
+		t.Fatal("引擎未在 10s 内退出")
+	}
+}
+
+// TestMouseDeleteButton 点击选中行 [删除] → 移除任务（含 cursor 回退）。
+func TestMouseDeleteButton(t *testing.T) {
+	m := newTestModel(t)
+	m.tasks = []*Task{
+		{URL: "u", Output: "a.bin", State: StateDone},
+		{URL: "u", Output: "b.bin", State: StateDone},
+	}
+	m.cursor = 0
+	m.View()
+	// 取选中行（rowIdx==0）的删除按钮
+	var z *clickZone
+	for i := range lastFrame.buttons {
+		if lastFrame.buttons[i].action == "delete" && lastFrame.buttons[i].rowIdx == 0 {
+			z = &lastFrame.buttons[i]
+			break
+		}
+	}
+	if z == nil {
+		t.Fatal("应渲染 [删除] 按钮")
+	}
+	km, cmd := m.Update(mouseClick(z.start+1, z.y))
+	m = km.(Model)
+	if cmd == nil {
+		t.Fatal("点 [删除] 应返回 taskRemovedMsg Cmd")
+	}
+	msg := cmd()
+	tm, ok := msg.(taskRemovedMsg)
+	if !ok {
+		t.Fatalf("Cmd 应产生 taskRemovedMsg, got %T", msg)
+	}
+	km, _ = m.Update(tm)
+	m = km.(Model)
+	if len(m.tasks) != 1 || m.tasks[0].Output != "b.bin" {
+		t.Fatalf("删除 a.bin 后应剩 b.bin, got %d 个: %+v", len(m.tasks), m.tasks)
+	}
+	if m.cursor != 0 {
+		t.Fatalf("删除后 cursor 应保持 0, got %d", m.cursor)
+	}
+}
+
+// TestMouseIgnoredInInputMode 输入模式下鼠标点击不应触发动作（防误触）。
+func TestMouseIgnoredInInputMode(t *testing.T) {
+	m := newTestModel(t)
+	km, _ := m.Update(keyRunes("a"))
+	m = km.(Model)
+	m.View()
+	km, _ = m.Update(mouseClick(3, 1))
+	m = km.(Model)
+	if !m.adding {
+		t.Fatal("输入模式下鼠标点击不应退出添加模式")
+	}
+}
+
+// ---- P0 增强（R33：全局汇总 / 失败优先 / 错误展开） ----
+
+// TestSummaryLine 全局汇总行：活动数（running+queued）/ 总速 / 总进度。
+// 进度仅统计已知大小任务（size>0），全部未知 → "--"。
+func TestSummaryLine(t *testing.T) {
+	m := newTestModel(t)
+	m.tasks = []*Task{
+		{URL: "u", Output: "run.bin", State: StateRunning, Size: 1000, Done: 250, Speed: 2048},
+		{URL: "u", Output: "que.bin", State: StateQueued, Size: 1000, Done: 0},
+		{URL: "u", Output: "ok.bin", State: StateDone, Size: 1000, Done: 1000},
+	}
+	got := m.summaryLine()
+	// 活动 = running+queued = 2；总速 = 2048B/s = 2.0KB/s；
+	// 总进度 = 所有已知大小任务 (250+0+1000)/(1000+1000+1000) = 41%（queued 也计入总量）
+	for _, want := range []string{"活动 2", "2.0KB/s", "41%"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("汇总行缺少 %q: %s", want, got)
+		}
+	}
+	// 未知大小任务不拖累进度；有已知大小即算百分比
+	m2 := newTestModel(t)
+	m2.tasks = []*Task{
+		{URL: "u", Output: "run.bin", State: StateRunning, Size: 0, Done: 0, Speed: 1024},
+		{URL: "u", Output: "ok.bin", State: StateDone, Size: 100, Done: 100},
+	}
+	if got := m2.summaryLine(); !strings.Contains(got, "100%") {
+		t.Fatalf("有已知大小任务应算进度: %s", got)
+	}
+	// 全部未知大小 → "--"
+	m3 := newTestModel(t)
+	m3.tasks = []*Task{{URL: "u", Output: "run.bin", State: StateRunning, Size: 0, Done: 0}}
+	if got := m3.summaryLine(); !strings.Contains(got, "--") {
+		t.Fatalf("全部未知大小应显示 --%%: %s", got)
+	}
+	// 无任务时 View 不渲染汇总行
+	m4 := newTestModel(t)
+	if strings.Contains(m4.View(), "活动 ") {
+		t.Fatal("无任务不应渲染汇总行")
+	}
+}
+
+// TestTaskOrder 显示排序：失败 → 暂停 → 进行中/排队 → 完成；
+// 同状态稳定保序；仅影响显示层，Model 内任务顺序与 cursor 语义不变。
+func TestTaskOrder(t *testing.T) {
+	tasks := []*Task{
+		{Output: "done", State: StateDone},
+		{Output: "fail1", State: StateFailed},
+		{Output: "paused", State: StatePaused},
+		{Output: "run", State: StateRunning},
+		{Output: "queued", State: StateQueued},
+		{Output: "fail2", State: StateFailed},
+	}
+	order := taskOrder(tasks)
+	want := []int{1, 5, 2, 3, 4, 0} // fail1 fail2 paused run queued done（同状态保原序）
+	if len(order) != len(want) {
+		t.Fatalf("长度=%d want %d", len(order), len(want))
+	}
+	for i, w := range want {
+		if order[i] != w {
+			t.Fatalf("order[%d]=%d want %d（全序 %v）", i, order[i], w, order)
+		}
+	}
+	// View 渲染后 Model 内任务顺序不得改变
+	m := newTestModel(t)
+	m.tasks = tasks
+	m.View()
+	if m.tasks[0].Output != "done" || m.tasks[1].State != StateFailed {
+		t.Fatal("taskOrder 不应改动 Model 内任务顺序")
+	}
+}
+
+// TestErrorExpandCollapse 点击失败行展开完整错误详情（单行化），再点收起。
+// 点击无错误行不展开；展开行自身点击同样收起（同一 toggle 路径）。
+func TestErrorExpandCollapse(t *testing.T) {
+	// 错误含换行且超长：行尾短标签被 trunc(40) 截断，展开行显示完整单行化内容
+	fullErr := "探测资源失败:\n" + strings.Repeat("z", 60)
+	m := newTestModel(t)
+	m.tasks = []*Task{
+		{URL: "u", Output: "a.bin", State: StateFailed, Err: fmt.Errorf("%s", fullErr)},
+		{URL: "u", Output: "b.bin", State: StateDone},
+	}
+	m.cursor = 0
+	m.View()
+	if m.expandedErr != -1 {
+		t.Fatal("初始 expandedErr 应为 -1")
+	}
+	// 点击失败行 → 展开
+	z := findZoneAt(lastFrame.rows, "select", 0)
+	if z == nil {
+		t.Fatal("应记录失败行热区")
+	}
+	km, _ := m.Update(mouseClick(z.start+1, z.y))
+	m = km.(Model)
+	if m.expandedErr != 0 {
+		t.Fatalf("点击失败行应展开, got %d", m.expandedErr)
+	}
+	v := m.View()
+	if !strings.Contains(v, strings.Repeat("z", 60)) {
+		t.Fatalf("展开行应显示完整错误（换行压成空格、超长不截断）\n---\n%s", v)
+	}
+	// 再点同一行 → 收起
+	m.View()
+	z = findZoneAt(lastFrame.rows, "select", 0)
+	if z == nil {
+		t.Fatal("收起路径也应能找到行热区")
+	}
+	km, _ = m.Update(mouseClick(z.start+1, z.y))
+	m = km.(Model)
+	if m.expandedErr != -1 {
+		t.Fatalf("再点应收起, got %d", m.expandedErr)
+	}
+	if v := m.View(); strings.Contains(v, strings.Repeat("z", 60)) {
+		t.Fatalf("收起后不应再显示完整错误（仅行尾截断短标签）\n---\n%s", v)
+	}
+	// 点击无错误行不展开
+	m2 := newTestModel(t)
+	m2.tasks = []*Task{
+		{URL: "u", Output: "ok.bin", State: StateDone},
+		{URL: "u", Output: "fail.bin", State: StateFailed, Err: fmt.Errorf("boom")},
+	}
+	m2.cursor = 0
+	m2.View()
+	z = findZoneAt(lastFrame.rows, "select", 0)
+	if z == nil {
+		t.Fatal("应记录 done 行热区")
+	}
+	km, _ = m2.Update(mouseClick(z.start+1, z.y))
+	m2 = km.(Model)
+	if m2.expandedErr != -1 {
+		t.Fatalf("点击无错误行不应展开, got %d", m2.expandedErr)
+	}
+}
+

@@ -11,8 +11,15 @@ mkdir -p "$DATA" outdir
 SIZE=$((48*1024*1024))
 "$TS/testserver.exe" -dir "$DATA" -name f.bin -size $SIZE -limit $((2*1024*1024)) > tui.log 2>&1 &
 TS_PID=$!
-sleep 1
-BASE=$(grep '^url=' tui.log | cut -d= -f2- | sed 's|/file/.*||')
+# 轮询等待 url 就绪（Windows 下进程首次启动可能超过 1s，固定 sleep 会偶发失败）
+BASE=""
+for _ in $(seq 1 20); do
+  BASE=$(grep '^url=' tui.log 2>/dev/null | cut -d= -f2- | sed 's|/file/.*||')
+  [ -n "$BASE" ] && break
+  sleep 0.5
+done
+cat tui.log
+[ -n "$BASE" ] || { echo "未取得 testserver url"; kill $TS_PID 2>/dev/null || true; exit 1; }
 SRC_SHA=$(python -c "
 import hashlib
 h=hashlib.sha256()

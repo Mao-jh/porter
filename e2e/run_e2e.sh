@@ -14,10 +14,15 @@ SIZE=$((64*1024*1024))  # 64 MiB
 echo "=== [E1] 启动 testserver.exe（64MiB 模式文件） ==="
 "$BIN/testserver.exe" -dir "$DATA" -name big.bin -size $SIZE > ts.log 2>&1 &
 TS_PID=$!
-sleep 1
+# 轮询等待 url 就绪（Windows 下进程首次启动可能超过 1s，固定 sleep 会偶发失败）
+URL=""
+for _ in $(seq 1 20); do
+  URL=$(grep '^url=' ts.log 2>/dev/null | cut -d= -f2-)
+  [ -n "$URL" ] && break
+  sleep 0.5
+done
 cat ts.log
-URL=$(grep '^url=' ts.log | cut -d= -f2-)
-[ -n "$URL" ] || { echo "未取得 URL"; exit 1; }
+[ -n "$URL" ] || { echo "未取得 URL"; kill $TS_PID 2>/dev/null || true; exit 1; }
 
 echo "=== [E2] 源文件 sha256（python 流式计算） ==="
 SRC_SHA=$(python -c "
