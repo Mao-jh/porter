@@ -325,6 +325,7 @@ func (fc *ftpConn) close() {
 }
 
 // dialGuarded 解析 host:port 并强制回环（allowRemote=false），拨号绑定本地 127.0.0.1（H-3）。
+// allowRemote=true 时放行公网目标并使用默认源地址（R29：回环绑定会令公网连接必然失败）。
 // 返回连接与对端解析 IP（供 bounce 防御比对）。
 func dialGuarded(ctx context.Context, host string, port int, allowRemote bool) (net.Conn, net.IP, error) {
 	var ctrlIP net.IP
@@ -348,9 +349,9 @@ func dialGuarded(ctx context.Context, host string, port int, allowRemote bool) (
 			return nil, nil, fmt.Errorf("network: %s 未解析到可用回环地址 (H-3)", host)
 		}
 	}
-	d := &net.Dialer{
-		LocalAddr: &net.TCPAddr{IP: net.ParseIP("127.0.0.1"), Port: 0},
-		Timeout:   5 * time.Second,
+	d := defaultDialer
+	if !allowRemote {
+		d = loopbackDialer
 	}
 	conn, err := d.DialContext(ctx, "tcp", net.JoinHostPort(ctrlIP.String(), strconv.Itoa(port)))
 	if err != nil {

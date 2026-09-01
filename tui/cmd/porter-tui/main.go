@@ -117,7 +117,11 @@ func quitDetail(m tui.Model, ok bool) string {
 	var b strings.Builder
 	b.WriteString(m.QuitReason)
 	for _, t := range m.Tasks() {
-		fmt.Fprintf(&b, " [%s %s]", t.Output, t.State)
+		fmt.Fprintf(&b, " [%s %s", t.Output, t.State)
+		if t.Err != nil {
+			fmt.Fprintf(&b, " %v", t.Err)
+		}
+		b.WriteString("]")
 	}
 	return b.String()
 }

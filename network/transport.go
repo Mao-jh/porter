@@ -45,16 +45,26 @@ type Transport struct {
 	proxySet    bool               // 已配置代理（第 14 轮：显式出站同意，见 proxy.go）
 }
 
-// NewTransport 构造传输层。dialer 强制绑定 127.0.0.0/8（H-3）。
-// 若 allowRemote=true（仅测试用），允许非回环地址——生产路径必须为 false。
+// loopbackDialer 仅回环模式拨号器：本地源地址绑定 127.0.0.1（H-3 socket 层兜底，
+// 即使目标校验被绕过也无法路由出公网）。禁止对公网目标使用——源地址在回环接口上
+// 无法路由，会得到 unreachable network（R29 实测：TUI 默认放行公网却全失败）。
+var loopbackDialer = &net.Dialer{
+	LocalAddr: &net.TCPAddr{IP: net.ParseIP("127.0.0.1"), Port: 0},
+	Timeout:   5 * time.Second,
+}
+
+// defaultDialer 显式放行模式拨号器：不绑定本地源地址（系统默认路由）。
+// allowRemote=true（TUI 默认 / MCP -allow-remote / 显式 -proxy）时使用；
+// 否则代理与公网目标一律 unreachable network。
+var defaultDialer = &net.Dialer{Timeout: 5 * time.Second}
+
+// NewTransport 构造传输层。allowRemote=false 时拨号器强制绑定 127.0.0.0/8（H-3）；
+// allowRemote=true（TUI 人类终端默认 / MCP -allow-remote / 显式代理）时放行公网目标，
+// 并使用默认源地址拨号（回环绑定会令公网连接必然失败，R29 修复）。
 //
 // 超时策略：不在 http.Client 上设置总超时（会切断低速大文件/限速下载），
 // 仅约束拨号与响应头阶段；响应体停滞由调用方上下文取消兜底。
 func NewTransport(allowRemote bool) *Transport {
-	dialer := &net.Dialer{
-		LocalAddr: &net.TCPAddr{IP: net.ParseIP("127.0.0.1"), Port: 0}, // H-3：本地出口
-		Timeout:   5 * time.Second,
-	}
 	t := &Transport{allowRemote: allowRemote}
 	// 回环校验引用 t.allowRemote（而非构造期快照）：SetProxy 置位后，
 	// 代理地址（可能非回环）必须可拨号——代理语义见 proxy.go。
@@ -88,7 +98,13 @@ func NewTransport(allowRemote bool) *Transport {
 				} else if !ip.IsLoopback() && !allow {
 					return nil, fmt.Errorf("network: 禁止非回环地址 %s (H-3)", ip)
 				}
-				return dialer.DialContext(ctx, network, addr)
+				// R29：源地址绑定必须与 allowRemote 联动——回环绑定只适用于仅回环模式；
+				// 放行模式（含 SetProxy 运行中置位）用默认拨号器，否则公网/远程代理必然拨不通。
+				d := defaultDialer
+				if !allow {
+					d = loopbackDialer
+				}
+				return d.DialContext(ctx, network, addr)
 			},
 			TLSHandshakeTimeout:   10 * time.Second,
 			ResponseHeaderTimeout: 15 * time.Second,

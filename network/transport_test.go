@@ -219,3 +219,45 @@ func TestSetHeaders_Echo(t *testing.T) {
 		t.Error("SetHeaders(nil) 后不应再携带旧头")
 	}
 }
+
+// TestDialContext_AllowRemote R29 回归：源地址绑定必须与 allowRemote 联动。
+// 仅回环模式拨公网 → H-3 拒绝（目标校验）；放行模式拨公网 → 不得返回 H-3
+// （此时应走默认源地址拨号，真实结果取决于网络，但绝不可是 H-3 拒绝）。
+func TestDialContext_AllowRemote(t *testing.T) {
+	cases := []struct {
+		name        string
+		allowRemote bool
+		wantH3      bool
+	}{
+		{"仅回环模式拒绝公网", false, true},
+		{"放行模式不拒公网", true, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			tr := NewTransport(tc.allowRemote)
+			_, err := tr.client.Transport.(*http.Transport).DialContext(context.Background(), "tcp", "203.0.113.1:443")
+			if tc.wantH3 {
+				if err == nil || !strings.Contains(err.Error(), "H-3") {
+					t.Fatalf("仅回环模式应返回 H-3 拒绝, got %v", err)
+				}
+				return
+			}
+			if err != nil && strings.Contains(err.Error(), "H-3") {
+				t.Fatalf("放行模式不应返回 H-3 拒绝, got %v", err)
+			}
+		})
+	}
+}
+
+// TestDialContext_ProxySetSwitchesDialer R29 回归：SetProxy 运行中置位 allowRemote
+// 后，拨号器必须切换到默认源地址（否则公网/远程代理必然 unreachable network）。
+func TestDialContext_ProxySetSwitchesDialer(t *testing.T) {
+	tr := NewTransport(false)
+	if err := tr.SetProxy("http://127.0.0.1:7890"); err != nil {
+		t.Fatalf("SetProxy: %v", err)
+	}
+	_, err := tr.client.Transport.(*http.Transport).DialContext(context.Background(), "tcp", "203.0.113.1:443")
+	if err != nil && strings.Contains(err.Error(), "H-3") {
+		t.Fatalf("代理置位后不应返回 H-3 拒绝, got %v", err)
+	}
+}

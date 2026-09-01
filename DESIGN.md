@@ -64,7 +64,9 @@ func NewTransport(allowRemote bool) *Transport
 func (t *Transport) SetFaults(dc, to, too, se int32) // 断连/超时/429/5xx
 func (t *Transport) FetchRange(ctx, urlStr string, start, end int64, dst io.WriterAt) error
 ```
-**不变量**：Dialer `LocalAddr = 127.0.0.1`；非回环主机拒绝（H-3）；`end=0` 表示到 EOF。
+**不变量**：仅回环模式 Dialer `LocalAddr = 127.0.0.1`（socket 层兜底）且非回环主机拒绝（H-3）；
+显式放行模式（allowRemote=true：TUI 默认 / MCP -allow-remote / 显式代理）使用默认源地址拨号
+（R29 修复：源地址绑定回环会令公网连接必然 unreachable network）；`end=0` 表示到 EOF。
 
 **第 6 轮新增契约**：
 ```go

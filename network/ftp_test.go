@@ -349,3 +349,16 @@ func makeFTPTestFile(dir, name string, size int64) error {
 	}
 	return nil
 }
+
+// TestDialGuarded_AllowRemote R29 回归：FTP 拨号源地址绑定与 allowRemote 联动。
+// 仅回环模式拨公网 → H-3 拒绝；放行模式 → 不返回 H-3。
+func TestDialGuarded_AllowRemote(t *testing.T) {
+	_, _, err := dialGuarded(context.Background(), "203.0.113.1", 21, false)
+	if err == nil || !strings.Contains(err.Error(), "H-3") {
+		t.Fatalf("仅回环模式应返回 H-3 拒绝, got %v", err)
+	}
+	_, _, err = dialGuarded(context.Background(), "203.0.113.1", 21, true)
+	if err != nil && strings.Contains(err.Error(), "H-3") {
+		t.Fatalf("放行模式不应返回 H-3 拒绝, got %v", err)
+	}
+}
