@@ -14,6 +14,7 @@ import (
 	"github.com/Mao-jh/porter/persist"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 )
 
 func newTestModel(t *testing.T) Model {
@@ -986,6 +987,195 @@ func TestErrorExpandCollapse(t *testing.T) {
 	m2 = km.(Model)
 	if m2.expandedErr != -1 {
 		t.Fatalf("点击无错误行不应展开, got %d", m2.expandedErr)
+	}
+}
+
+// ---- R34：原型三步法定稿（协议差异化 + 30/70 阈值 + 底部操作栏） ----
+
+// TestDetectProto URL → 协议标签。
+func TestDetectProto(t *testing.T) {
+	cases := map[string]string{
+		"http://127.0.0.1/a.bin": "http",
+		"https://x.com/b.torrent": "http",
+		"MAGNET:?xt=urn:btih:abc": "magnet",
+		" magnet:?xt=urn:btih:def ": "magnet",
+	}
+	for in, want := range cases {
+		if got := detectProto(in); got != want {
+			t.Errorf("detectProto(%q)=%q want %q", in, got, want)
+		}
+	}
+}
+
+// TestProtoTagsAndInfo 协议差异化：标签一眼区分，信息列按协议渲染
+// （HTTP=速度+ETA / BT=连接+做种 / 磁力=解析状态）。
+func TestProtoTagsAndInfo(t *testing.T) {
+	m := newTestModel(t)
+	m.tasks = []*Task{
+		{URL: "u", Output: "http.bin", State: StateRunning, Proto: "http",
+			Size: 2 << 30, Done: 58 * (2 << 30) / 100, Speed: 3.4 * (1 << 20), ETA: 250},
+		{URL: "u", Output: "bt.bin", State: StateRunning, Proto: "bt",
+			Size: 1 << 30, Done: 12 * (1 << 30) / 100, Peers: 45, Seeds: 8},
+		{URL: "u", Output: "mag.bin", State: StateRunning, Proto: "magnet", Meta: "解析中…"},
+		{URL: "u", Output: "bad.bin", State: StateFailed, Proto: "http",
+			Err: fmt.Errorf("探测资源失败:\nconnection refused")},
+	}
+	v := m.View()
+	for _, want := range []string{
+		"HTTP", "BT", "磁力", // 协议标签
+		"●下载中", "●失败", // 状态色点+字
+		"45 连接 8 做种", // BT 信息列
+		"解析中…",       // 磁力信息列
+		"3.4MB/s", "ETA 4m 10s", // HTTP 速度+剩余（humanBytes 用 KB/MB 进制）
+		"探测资源失败: connect", // 错误单行化截断（\n 压成空格，不断行）
+	} {
+		if !strings.Contains(v, want) {
+			t.Errorf("View 缺少 %q\n---\n%s", want, v)
+		}
+	}
+	if strings.Contains(v, "\nconnection refused") || strings.Contains(v, "\n探测资源失败") {
+		t.Fatal("错误含换行会断行破坏热区 y 坐标，必须单行化")
+	}
+}
+
+// TestBarColorThresholds 进度条三色阈值（R34 定稿）：<30% 红 / <70% 黄 / ≥70% 绿。
+func TestBarColorThresholds(t *testing.T) {
+	cases := []struct {
+		frac float64
+		want lipgloss.Color // ANSI 256 色索引
+	}{
+		{0.00, "9"}, {0.29, "9"}, // 红
+		{0.30, "11"}, {0.69, "11"}, // 黄
+		{0.70, "10"}, {1.00, "10"}, // 绿
+	}
+	for _, c := range cases {
+		got := barColor(c.frac).GetForeground()
+		if got != c.want {
+			t.Errorf("barColor(%.2f) 色=%v want %v", c.frac, got, c.want)
+		}
+	}
+}
+
+// footerY 底栏按钮所在终端行（热区中 y 最大的一组 = 底部操作栏）。
+func footerY(buttons []clickZone) int {
+	maxY := -1
+	for _, z := range buttons {
+		if z.y > maxY {
+			maxY = z.y
+		}
+	}
+	return maxY
+}
+
+// TestFooterButtons 底部操作栏（R34）：按钮跟随选中任务状态，x 恒 2/10 固定列位。
+func TestFooterButtons(t *testing.T) {
+	m := newTestModel(t)
+	m.tasks = []*Task{
+		{URL: "u", Output: "run.bin", State: StateRunning},
+		{URL: "u", Output: "bad.bin", State: StateFailed, Err: fmt.Errorf("boom")},
+		{URL: "u", Output: "ok.bin", State: StateDone},
+	}
+	m.cursor = 0 // 选中 running → 底栏 [暂停] [移除]
+	m.View()
+	fy := footerY(lastFrame.buttons)
+	if fy < 0 {
+		t.Fatal("应有底栏按钮热区")
+	}
+	pause := findZoneAtY(lastFrame.buttons, "pause", 0, fy)
+	if pause == nil {
+		t.Fatal("选中 running 时底栏应有 [暂停]")
+	}
+	if pause.start != 2 {
+		t.Errorf("底栏 [暂停] x=%d want 2（固定列位，不随内容跳动）", pause.start)
+	}
+	del := findZoneAtY(lastFrame.buttons, "delete", 0, fy)
+	if del == nil || del.start != 9 {
+		t.Errorf("底栏 [移除] 缺失或 x 错误: %+v", del)
+	}
+	// 切到 failed → 底栏 [继续] [移除]
+	m.cursor = 1
+	m.View()
+	fy = footerY(lastFrame.buttons)
+	if findZoneAtY(lastFrame.buttons, "resume", 1, fy) == nil {
+		t.Fatal("选中 failed 时底栏应有 [继续]（重试语义）")
+	}
+	// 切到 done → 底栏仅 [移除]，无 [暂停]/[继续]（行首按钮仍按各自状态渲染，此处只看底栏热区）
+	m.cursor = 2
+	m.View()
+	fy = footerY(lastFrame.buttons)
+	if findZoneAtY(lastFrame.buttons, "pause", 2, fy) != nil {
+		t.Fatal("选中 done 时底栏不应有 [暂停] 热区")
+	}
+	if findZoneAtY(lastFrame.buttons, "resume", 2, fy) != nil {
+		t.Fatal("选中 done 时底栏不应有 [继续] 热区")
+	}
+	if findZoneAtY(lastFrame.buttons, "delete", 2, fy) == nil {
+		t.Fatal("选中 done 时底栏应有 [移除] 热区")
+	}
+}
+
+// findZoneAtY 指定 y、action、rowIdx 的热区（底栏按钮专用；行首按钮 y 不同）。
+func findZoneAtY(zones []clickZone, action string, rowIdx, y int) *clickZone {
+	for i := range zones {
+		if zones[i].action == action && zones[i].rowIdx == rowIdx && zones[i].y == y {
+			return &zones[i]
+		}
+	}
+	return nil
+}
+
+// TestMouseFooterDelete 点击底栏 [移除] → 状态转移（taskRemovedMsg 移除任务）。
+func TestMouseFooterDelete(t *testing.T) {
+	m := newTestModel(t)
+	m.tasks = []*Task{
+		{URL: "u", Output: "a.bin", State: StateDone},
+		{URL: "u", Output: "b.bin", State: StateFailed, Err: fmt.Errorf("boom")},
+	}
+	m.cursor = 1 // 选中 failed
+	m.View()
+	fy := footerY(lastFrame.buttons)
+	z := findZoneAtY(lastFrame.buttons, "delete", 1, fy)
+	if z == nil {
+		t.Fatal("底栏应有 [移除] 热区")
+	}
+	km, cmd := m.Update(mouseClick(z.start+1, z.y))
+	m = km.(Model)
+	if cmd == nil {
+		t.Fatal("底栏 [移除] 应返回删除 Cmd")
+	}
+	km, _ = m.Update(cmd())
+	m = km.(Model)
+	if len(m.tasks) != 1 || m.tasks[0].Output != "a.bin" {
+		t.Fatalf("点击底栏 [移除] 后应删除选中任务, got %d 个", len(m.tasks))
+	}
+}
+
+// TestFooterFollowsCursorAfterSelect 点击行改变选中 → 底栏按钮随之切换。
+func TestFooterFollowsCursorAfterSelect(t *testing.T) {
+	m := newTestModel(t)
+	m.tasks = []*Task{
+		{URL: "u", Output: "run.bin", State: StateRunning},
+		{URL: "u", Output: "ok.bin", State: StateDone},
+	}
+	m.cursor = 0
+	m.View()
+	// 点击第 2 行（done）→ cursor 移到 done → 底栏只剩 [移除]
+	rz := findZoneAt(lastFrame.rows, "select", 1)
+	if rz == nil {
+		t.Fatal("应记录第 2 行热区")
+	}
+	km, _ := m.Update(mouseClick(rz.start+1, rz.y))
+	m = km.(Model)
+	if m.cursor != 1 {
+		t.Fatalf("点击应选中第 2 行, got %d", m.cursor)
+	}
+	m.View()
+	fy := footerY(lastFrame.buttons)
+	if findZoneAtY(lastFrame.buttons, "pause", 1, fy) != nil {
+		t.Fatalf("选中 done 后底栏不应有 [暂停] 热区")
+	}
+	if findZoneAtY(lastFrame.buttons, "delete", 1, fy) == nil {
+		t.Fatal("选中 done 后底栏应有 [移除] 热区")
 	}
 }
 

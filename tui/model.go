@@ -68,11 +68,26 @@ type Task struct {
 	Done   int64
 	Speed  float64 // B/s（进度差分）
 	ETA    int64   // 剩余秒数（0=未知；R21 起由速率推算）
+	// Proto 协议标签（显示层：http/bt/magnet）。引擎当前仅产出 http，
+	// 但显示层按协议差异化渲染信息列（HTTP=速度+剩余 / BT=连接+做种 /
+	// 磁力=解析状态），引擎未来扩展 BT 时 UI 零改动。
+	Proto string
+	Peers int    // BT 连接数（显示层预留，默认 0）
+	Seeds int    // BT 做种数（显示层预留，默认 0）
+	Meta  string // 磁力解析状态（显示层预留，空=解析完成）
 
 	lastDone int64
 	lastAt   time.Time
 	cancel   context.CancelFunc // 非 nil 表示引擎在跑
 	doneCh   chan error         // 引擎完成事件（tick 轮询抽取，缓冲 1）
+}
+
+// detectProto 从 URL 探测协议标签（显示层用）：magnet: → magnet；其余 http。
+func detectProto(urlStr string) string {
+	if strings.HasPrefix(strings.ToLower(strings.TrimSpace(urlStr)), "magnet:") {
+		return "magnet"
+	}
+	return "http"
 }
 
 // start 启动引擎 goroutine：RunMulti 结束（成功/失败/取消）写入 doneCh。
@@ -179,7 +194,7 @@ func (m *Model) AddTask(raw string) error {
 	if !strings.HasPrefix(raw, "http://") && !strings.HasPrefix(raw, "https://") {
 		return fmt.Errorf("仅支持 http/https URL: %s", raw)
 	}
-	t := &Task{URL: raw, Output: deriveOutputName(raw, m.tasks), State: StateQueued}
+	t := &Task{URL: raw, Output: deriveOutputName(raw, m.tasks), State: StateQueued, Proto: detectProto(raw)}
 	if m.outDir != "" {
 		t.Output = filepath.Join(m.outDir, t.Output)
 	}
@@ -423,7 +438,7 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				m.errMsg = "仅支持 http/https URL"
 				return m, nil
 			}
-			t := &Task{URL: raw, Output: deriveOutputName(raw, m.tasks), State: StateQueued}
+			t := &Task{URL: raw, Output: deriveOutputName(raw, m.tasks), State: StateQueued, Proto: detectProto(raw)}
 			if m.outDir != "" {
 				t.Output = filepath.Join(m.outDir, t.Output)
 			}
@@ -880,7 +895,7 @@ func (m *Model) RestoreTasks() {
 			}
 			m.tasks = append(m.tasks, &Task{
 				URL: st.URL, Output: st.ID, State: state,
-				Size: st.FileSize, Done: st.Done,
+				Size: st.FileSize, Done: st.Done, Proto: detectProto(st.URL),
 			})
 		}
 	}

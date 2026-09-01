@@ -12,24 +12,73 @@ var (
 	styleTitle   = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("12"))
 	styleCursor  = lipgloss.NewStyle().Foreground(lipgloss.Color("10"))
 	styleBarRest = lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
-	styleDone    = lipgloss.NewStyle().Foreground(lipgloss.Color("10"))
-	styleFail    = lipgloss.NewStyle().Foreground(lipgloss.Color("9"))
-	stylePause   = lipgloss.NewStyle().Foreground(lipgloss.Color("11"))
+	styleDone    = lipgloss.NewStyle().Foreground(lipgloss.Color("12")) // 蓝：完成
+	styleFail    = lipgloss.NewStyle().Foreground(lipgloss.Color("9"))  // 红：失败
+	stylePause   = lipgloss.NewStyle().Foreground(lipgloss.Color("11")) // 黄：暂停
+	styleRun     = lipgloss.NewStyle().Foreground(lipgloss.Color("10")) // 绿：下载中
 	styleDim     = lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
 	styleErr     = lipgloss.NewStyle().Foreground(lipgloss.Color("9"))
 	styleBtn     = lipgloss.NewStyle().Foreground(lipgloss.Color("14")) // 亮青：暂停/继续
 	styleBtnDel  = lipgloss.NewStyle().Foreground(lipgloss.Color("9"))  // 红：删除
+	styleMeta    = lipgloss.NewStyle().Foreground(lipgloss.Color("13")) // 紫：磁力解析状态
+	styleFooter  = lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
 	stylePanel   = lipgloss.NewStyle().
 			Border(lipgloss.RoundedBorder()).
 			BorderForeground(lipgloss.Color("240")).
 			Padding(0, 1)
 )
 
-// helpLine 快捷键帮助（常驻，不受动态 status 影响）。
-const helpLine = "a:添加任务  x:代理  s:设置  p:暂停/继续  d:删除  q:退出  ↑/↓/滚轮:选择  鼠标:点行或按钮"
+// protoStyle 协议标签配色：HTTP 青 / BT 绿 / 磁力 紫（一眼区分任务类型）。
+var protoStyle = map[string]lipgloss.Style{
+	"http":   lipgloss.NewStyle().Foreground(lipgloss.Color("14")),
+	"bt":     lipgloss.NewStyle().Foreground(lipgloss.Color("10")),
+	"magnet": lipgloss.NewStyle().Foreground(lipgloss.Color("13")),
+}
 
-// barWidth 任务行进度条宽度（单元格）。
-const barWidth = 24
+// protoTag 协议短标签（未知协议不渲染标签列，宽度顺延）。
+var protoTag = map[string]string{"http": "HTTP", "bt": "BT", "magnet": "磁力"}
+
+// dotStyle 状态色点：下载中=绿 暂停=黄 完成=蓝 失败=红 排队=灰。
+var dotStyle = map[TaskState]lipgloss.Style{
+	StateRunning: styleRun,
+	StatePaused:  stylePause,
+	StateDone:    styleDone,
+	StateFailed:  styleFail,
+	StateQueued:  lipgloss.NewStyle().Foreground(lipgloss.Color("245")),
+}
+
+// stateDot 状态色点（●）+ 状态字（如 ●下载中），色点与文字同色。
+func stateDot(s TaskState) string {
+	st, ok := dotStyle[s]
+	if !ok {
+		st = dotStyle[StateQueued]
+	}
+	return st.Render("●" + stateWord(s))
+}
+
+// stateWord 状态字（色点旁 2~3 汉字）。
+func stateWord(s TaskState) string {
+	switch s {
+	case StateRunning:
+		return "下载中"
+	case StatePaused:
+		return "已暂停"
+	case StateDone:
+		return "完成"
+	case StateFailed:
+		return "失败"
+	case StateQueued:
+		return "排队"
+	}
+	return "?"
+}
+
+// helpLine 快捷键帮助（常驻底部操作栏，不受动态 status 影响）。
+const helpLine = "a:添加  x:代理  s:设置  p:暂停/继续  d:删除  q:退出  ↑/↓/滚轮:选择  鼠标:点行或按钮"
+
+// barWidth 任务行进度条宽度（单元格）。R34 从 24 收紧到 20，
+// 为协议差异化信息列腾出宽度（HTTP 速度/ETA、BT 连接/做种、磁力解析状态）。
+const barWidth = 20
 
 // ---- 鼠标热区（R32 起） ----
 
@@ -78,9 +127,6 @@ func (m Model) View() string {
 	}
 	rows = append(rows, title)
 
-	// 帮助行（常驻）
-	rows = append(rows, styleDim.Render(helpLine))
-
 	if m.errMsg != "" {
 		rows = append(rows, styleErr.Render("提示: "+m.errMsg))
 	}
@@ -122,6 +168,9 @@ func (m Model) View() string {
 	if m.QuitReason == "failed" {
 		rows = append(rows, styleErr.Render("selftest: 存在未完成任务"))
 	}
+	// 底部操作栏（R34）：分隔线 + 鼠标可点按钮（跟随选中任务）+ 常显快捷键。
+	// y = 顶边框(1) + 已渲染行数（按钮热区与渲染行严格同步）。
+	rows = append(rows, m.renderFooter(1+len(rows)))
 	return stylePanel.Render(strings.Join(rows, "\n"))
 }
 
@@ -184,42 +233,24 @@ func cleanErr(err error) string {
 }
 
 // renderTaskRow 渲染单个任务行并记录热区（行尾按钮 + 整行选中）。
-// 行内容与旧版保持一致（测试断言关键词：文件名/状态字/字节/█/ETA 不变）。
+// R34 起行结构：cursor + [行首按钮区] + ●状态字 + 协议标签 + 文件名 + 进度条 + 字节 + 协议差异信息列。
+// 断言关键词（勿破坏）：文件名/状态字/字节/█/ETA；按钮 x 恒 4（TestButtonPosFixed）。
 func (m Model) renderTaskRow(t *Task, i, y int) string {
 	cursor := "  "
 	if i == m.cursor {
 		cursor = styleCursor.Render("> ")
 	}
-	var stateCol string
-	switch t.State {
-	case StateDone:
-		stateCol = styleDone.Render("✔ " + t.State.String())
-	case StateFailed:
-		stateCol = styleFail.Render("✗ " + t.State.String())
-	case StatePaused:
-		stateCol = stylePause.Render("⏸ " + t.State.String())
-	default:
-		stateCol = "· " + t.State.String()
+	line := cursor + renderTaskButtons(t, i, y) + " " + stateDot(t.State)
+	if tag, ok := protoTag[t.Proto]; ok {
+		line += " " + protoStyle[t.Proto].Render(tag)
 	}
+	line += " " + trunc(t.Output, 14)
 	bar, pct := renderBar(t.Done, t.Size, barWidth)
-	// 行首操作按钮区（固定宽度）→ 任务信息在右侧，按钮位置恒定不随参数跳动
-	line := cursor + renderTaskButtons(t, i, y)
-	line += fmt.Sprintf("%-18s %s %s %s %s/%s",
-		trunc(t.Output, 18),
-		stateCol,
-		bar,
-		pct,
-		humanBytes(t.Done), humanBytes(t.Size),
-	)
-	if t.State == StateRunning && t.Speed > 0 {
-		line += " " + humanBytes(int64(t.Speed)) + "/s"
-		if t.ETA > 0 {
-			line += " ETA " + formatETA(t.ETA)
-		}
-	}
+	line += " " + bar + " " + pct + " " + bytesPart(t)
+	line += protoInfo(t)
 	if t.Err != nil {
 		// H-3 拒绝是最常见失败原因：短标签直接可读（详情见顶部 errMsg 指引 / 点击行展开）
-		errText := trunc(cleanErr(t.Err), 40)
+		errText := trunc(cleanErr(t.Err), 24)
 		if isLoopbackRefusal(t.Err) {
 			errText = "安全边界拒绝(H-3)"
 		}
@@ -232,6 +263,104 @@ func (m Model) renderTaskRow(t *Task, i, y int) string {
 		start: 2, end: 2 + lipgloss.Width(line),
 	})
 	return line
+}
+
+// bytesPart 已下载/总大小；未知大小（size<=0，流式）显示 ??。
+func bytesPart(t *Task) string {
+	if t.Size <= 0 {
+		return "??"
+	}
+	return fmt.Sprintf("%s/%s", humanBytes(t.Done), humanBytes(t.Size))
+}
+
+// protoInfo 协议差异化信息列（R34）：一眼看出任务类型——
+// HTTP=速度+剩余 / BT=连接+做种 / 磁力=解析状态。
+// 未知协议或非活动状态返回空（不挤占宽度）。
+func protoInfo(t *Task) string {
+	switch t.Proto {
+	case "bt":
+		if t.State == StateDone {
+			if t.Seeds == 0 && t.Peers == 0 {
+				return ""
+			}
+			return fmt.Sprintf(" %d 做种 %d 连接", t.Seeds, t.Peers)
+		}
+		if t.Seeds == 0 && t.Peers == 0 {
+			return ""
+		}
+		return fmt.Sprintf(" %d 连接 %d 做种", t.Peers, t.Seeds)
+	case "magnet":
+		meta := t.Meta
+		if meta == "" {
+			meta = "解析完成"
+		}
+		return " " + styleMeta.Render(meta)
+	default: // http：仅下载中且速率>0 时显示（与 R21 前格式一致：speed ETA）
+		if t.State == StateRunning && t.Speed > 0 {
+			s := " " + humanBytes(int64(t.Speed)) + "/s"
+			if t.ETA > 0 {
+				s += " ETA " + formatETA(t.ETA)
+			}
+			return s
+		}
+		return ""
+	}
+}
+
+// renderFooter 底部操作栏（R34）：分隔线 + 鼠标可点按钮（跟随选中任务）+ 常显快捷键。
+// 按钮放固定列位 x=2 起（边框内第一列），绝不随任务信息宽度跳动（踩坑：可变宽度旁按钮会跳）。
+// y 由调用方传入（= 顶边框 1 + 已渲染行数），热区与渲染严格同步。
+func (m Model) renderFooter(y int) string {
+	sep := styleFooter.Render(strings.Repeat("─", 46))
+	help := styleDim.Render(helpLine)
+	btns := footerButtons(m.tasks, m.cursor, y)
+	if btns == "" {
+		return sep + "\n  " + help
+	}
+	return sep + "\n" + btns + "   " + help
+}
+
+// footerButtons 底栏按钮：跟随选中任务状态（running=暂停/移除，
+// paused/failed/queued=继续/移除，done=移除）。动作与键盘/行首按钮同语义（activateZone 复用）。
+// 按钮固定 6 列（[移除] 等），x 从 2 累加，与渲染一一对应。
+func footerButtons(tasks []*Task, cursor, y int) string {
+	if len(tasks) == 0 || cursor < 0 || cursor >= len(tasks) {
+		return ""
+	}
+	t := tasks[cursor]
+	type spec struct {
+		label  string
+		action string
+		del    bool
+	}
+	var btns []spec
+	switch t.State {
+	case StateRunning:
+		btns = []spec{{"暂停", "pause", false}, {"移除", "delete", true}}
+	case StatePaused, StateFailed, StateQueued:
+		btns = []spec{{"继续", "resume", false}, {"移除", "delete", true}}
+	case StateDone:
+		btns = []spec{{"移除", "delete", true}}
+	}
+	x := 2 // 左边框 1 + padding 1
+	var b strings.Builder
+	for j, s := range btns {
+		if j > 0 {
+			b.WriteString(" ")
+			x++
+		}
+		style := styleBtn
+		if s.del {
+			style = styleBtnDel
+		}
+		lastFrame.buttons = append(lastFrame.buttons, clickZone{
+			action: s.action, rowIdx: cursor, y: y,
+			start: x, end: x + 6,
+		})
+		b.WriteString(style.Render("[" + s.label + "]"))
+		x += 6
+	}
+	return b.String()
 }
 
 // btnAreaW 行首按钮区固定宽度（两按钮 "[暂停] [删除]" = 6+1+6 = 13 列）。
@@ -298,12 +427,13 @@ func renderBar(done, size int64, width int) (string, string) {
 	return bar, fmt.Sprintf("%3.0f%%", frac*100)
 }
 
-// barColor 按完成比例选进度条颜色。
+// barColor 按完成比例选进度条颜色（R34 定稿阈值，用户规格）：
+// <30% 红 / <70% 黄 / ≥70% 绿；100% 全绿。
 func barColor(frac float64) lipgloss.Style {
 	switch {
-	case frac >= 0.66:
+	case frac >= 0.70:
 		return lipgloss.NewStyle().Foreground(lipgloss.Color("10"))
-	case frac >= 0.33:
+	case frac >= 0.30:
 		return lipgloss.NewStyle().Foreground(lipgloss.Color("11"))
 	default:
 		return lipgloss.NewStyle().Foreground(lipgloss.Color("9"))
