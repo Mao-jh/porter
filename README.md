@@ -176,9 +176,9 @@ porter scrub ~/Downloads                            # 广告/垃圾 → .trash
 
 ### TUI
 ```bash
-porter-tui                        # 交互界面：a 添加 / p 暂停·继续 / d 删除 / q 退出
+porter-tui                        # 交互界面：a 添加 / x 代理出口 / p 暂停·继续 / d 删除 / q 退出（按键大小写均可）
 porter-tui --selftest -url URL    # 无头自检（CI 用）
-porter-tui -proxy socks5://127.0.0.1:1080 -load-cookies cookies.txt   # 代理/Cookie 同样适用
+porter-tui -proxy socks5://127.0.0.1:1080 -load-cookies cookies.txt   # 代理/Cookie 同样适用（公网链接需代理放行，或界面内按 x）
 ```
 
 ### MCP

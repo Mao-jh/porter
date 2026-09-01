@@ -19,16 +19,26 @@ var (
 	styleErr     = lipgloss.NewStyle().Foreground(lipgloss.Color("9"))
 )
 
+// helpLine 快捷键帮助（常驻，不受动态 status 影响）。
+const helpLine = "a:添加任务  x:代理出口  p:暂停/继续  d:删除  q:退出  ↑/↓:选择"
+
 // View 渲染整个界面（纯字符串，可测试断言）。
 func (m Model) View() string {
 	var b strings.Builder
-	b.WriteString(styleHeader.Render("downloader-tui  ") + styleDim.Render(m.status))
-	b.WriteString("\n")
+	if m.status != "" {
+		b.WriteString(styleHeader.Render("downloader-tui  ") + styleDim.Render(m.status))
+	} else {
+		b.WriteString(styleHeader.Render("downloader-tui"))
+	}
+	b.WriteString("\n" + styleDim.Render(helpLine) + "\n")
 	if m.errMsg != "" {
-		b.WriteString(styleErr.Render("错误: " + m.errMsg))
+		b.WriteString(styleErr.Render("提示: " + m.errMsg))
 		b.WriteString("\n")
 	}
-	if m.adding {
+	switch {
+	case m.proxying:
+		b.WriteString("代理出口> " + m.input.View() + "\n")
+	case m.adding:
 		b.WriteString("新增 URL> " + m.input.View() + "\n")
 	}
 
@@ -65,7 +75,12 @@ func (m Model) View() string {
 			}
 		}
 		if t.Err != nil {
-			line += " " + styleErr.Render(trunc(t.Err.Error(), 40))
+			// H-3 拒绝是最常见失败原因：短标签直接可读（详情见顶部 errMsg 指引）
+			errText := trunc(t.Err.Error(), 40)
+			if isLoopbackRefusal(t.Err) {
+				errText = "安全边界拒绝(H-3)"
+			}
+			line += " " + styleErr.Render(errText)
 		}
 		b.WriteString(line + "\n")
 	}

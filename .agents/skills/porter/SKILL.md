@@ -4,7 +4,7 @@ description: 使用 Porter 多线程下载器（HTTP/FTP/HLS/Metalink4/file 协�
 license: MIT
 metadata:
   author: Mao-jh
-  version: "1.1"
+  version: "1.2"
 agent_created: true
 ---
 
@@ -76,6 +76,8 @@ echo "见 http://x.com/a.mp4" | "$PORTER" extract -
    公网 URL 会被拒绝：`host ... resolves to non-loopback ... (H-3)`。
    唯一放行公网的方式：**显式指定 `-proxy`**（http/https/socks5），设置代理即视为允许出站。
    MCP 服务端另有 `-allow-remote` 开关。
+   **TUI 界面内**：按 `x` 直接输入代理地址（Enter 生效 / 空值清除 / Esc 取消），新任务与按 `p` 重试生效，
+   无需重启；公网任务失败时界面会提示该入口。TUI 按键大小写均可（大写 A/X/P/D/Q 同效）。
 2. **输出目录必须已存在**：不自动创建，`-o` 目录不存在直接失败（与 curl 一致）。
 3. **Windows 路径陷阱**：Git Bash 下 `/tmp/xxx` 传给原生 exe 会被解析为 `\tmp\xxx` 而失败。
    一律用 Windows 格式：`-o C:/Users/31423/Desktop/deliverable/out/file.bin`。

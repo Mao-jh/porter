@@ -3,6 +3,7 @@ package tui
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -332,5 +333,119 @@ func TestSelftestVerdict(t *testing.T) {
 	m.tasks[1].State = StateFailed
 	if m.verdict() != "failed" {
 		t.Fatal("含 failed 应 verdict=failed")
+	}
+}
+
+// TestUppercaseKeys 大写 A 同样进入添加模式（Shift/Caps Lock 兼容）。
+func TestUppercaseKeys(t *testing.T) {
+	m := newTestModel(t)
+	// 大写 A（tea.KeyRunes 携带 'A'，String()="A"，原实现不匹配导致无响应）
+	km, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("A")})
+	m = km.(Model)
+	if !m.adding {
+		t.Fatal("大写 A 应进入添加模式")
+	}
+	// Esc 退出后，大写 X 进入代理模式
+	km, _ = m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	m = km.(Model)
+	km, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("X")})
+	m = km.(Model)
+	if !m.proxying {
+		t.Fatal("大写 X 应进入代理输入模式")
+	}
+}
+
+// TestProxyFlow x → 输入代理 → Enter：baseOpt.Proxy 生效；空值清除。
+func TestProxyFlow(t *testing.T) {
+	m := newTestModel(t)
+	km, _ := m.Update(keyRunes("x"))
+	m = km.(Model)
+	if !m.proxying {
+		t.Fatal("按 x 应进入代理输入模式")
+	}
+	m.input.SetValue("http://127.0.0.1:7890")
+	km, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = km.(Model)
+	if m.proxying {
+		t.Fatal("Enter 后应退出代理输入模式")
+	}
+	if m.baseOpt.Proxy != "http://127.0.0.1:7890" {
+		t.Fatalf("代理未生效: %q", m.baseOpt.Proxy)
+	}
+	if m.status == "" {
+		t.Fatal("设置代理应有状态提示")
+	}
+	// 非法格式拒绝
+	km, _ = m.Update(keyRunes("x"))
+	m = km.(Model)
+	m.input.SetValue("ftp://bad")
+	km, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = km.(Model)
+	if m.baseOpt.Proxy != "http://127.0.0.1:7890" {
+		t.Fatal("非法代理不应覆盖已有配置")
+	}
+	if m.errMsg == "" {
+		t.Fatal("非法代理应提示格式")
+	}
+	// 空值清除代理
+	km, _ = m.Update(keyRunes("x"))
+	m = km.(Model)
+	m.input.SetValue("")
+	km, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = km.(Model)
+	if m.baseOpt.Proxy != "" {
+		t.Fatalf("空值应清除代理, got %q", m.baseOpt.Proxy)
+	}
+}
+
+// TestH3RefusalHint H-3 拒绝 → 失败并给出可行动指引（未配代理时）。
+func TestH3RefusalHint(t *testing.T) {
+	m := newTestModel(t)
+	tk := &Task{URL: "http://example.com/f.bin", Output: "f.bin", State: StateRunning}
+	tk.doneCh = make(chan error, 1)
+	tk.doneCh <- fmt.Errorf("探测资源失败: host example.com resolves to non-loopback 93.184.216.34 (H-3)")
+	m.tasks = []*Task{tk}
+	km, _ := m.Update(tickMsg(time.Now()))
+	m = km.(Model)
+	if m.tasks[0].State != StateFailed {
+		t.Fatalf("应失败, got %v", m.tasks[0].State)
+	}
+	if !strings.Contains(m.errMsg, "H-3") || !strings.Contains(m.errMsg, "x") {
+		t.Fatalf("应给出含 x 指引的 H-3 提示, got %q", m.errMsg)
+	}
+	// 非 H-3 失败不产生该提示
+	m2 := newTestModel(t)
+	tk2 := &Task{URL: "http://127.0.0.1/f.bin", Output: "f2.bin", State: StateRunning}
+	tk2.doneCh = make(chan error, 1)
+	tk2.doneCh <- fmt.Errorf("探测资源失败: connection refused")
+	m2.tasks = []*Task{tk2}
+	km2, _ := m2.Update(tickMsg(time.Now()))
+	m2 = km2.(Model)
+	if strings.Contains(m2.errMsg, "H-3") {
+		t.Fatalf("非 H-3 错误不应触发 H-3 提示: %q", m2.errMsg)
+	}
+}
+
+// TestViewHelpLine 帮助行常驻且含 x；H-3 失败行尾为短标签。
+func TestViewHelpLine(t *testing.T) {
+	m := newTestModel(t)
+	v := m.View()
+	if !strings.Contains(v, "x:代理出口") {
+		t.Fatalf("帮助行应含 x:代理出口\n---\n%s", v)
+	}
+	// 代理输入行
+	km, _ := m.Update(keyRunes("x"))
+	m = km.(Model)
+	v = m.View()
+	if !strings.Contains(v, "代理出口>") {
+		t.Fatalf("代理输入模式应渲染输入行\n---\n%s", v)
+	}
+	// H-3 失败行尾短标签
+	m2 := newTestModel(t)
+	m2.tasks = []*Task{{URL: "u", Output: "f.bin", State: StateFailed,
+		Err: fmt.Errorf("探测资源失败: host example.com resolves to non-loopback (H-3)")}}
+	v = m2.View()
+	if !strings.Contains(v, "安全边界拒绝(H-3)") {
+		t.Fatalf("H-3 失败行尾应显示短标签\n---\n%s", v)
 	}
 }

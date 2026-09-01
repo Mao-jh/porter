@@ -99,16 +99,17 @@ func taskDirName(urlStr string) string {
 
 // Model TUI 状态机。
 type Model struct {
-	tasks   []*Task
-	cursor  int
-	input   textinput.Model
-	adding  bool
-	baseOpt cli.Options // 共享旗标（StateDir 根 / Verify / Limit / Mode / Shards）
-	outDir  string      // 新任务输出目录（空=当前目录）
-	width   int
-	height  int
-	status  string
-	errMsg  string
+	tasks    []*Task
+	cursor   int
+	input    textinput.Model
+	adding   bool
+	proxying bool // 代理输入模式（x 进入；Enter 生效，Esc 取消）
+	baseOpt  cli.Options // 共享旗标（StateDir 根 / Verify / Limit / Mode / Shards / Proxy）
+	outDir   string      // 新任务输出目录（空=当前目录）
+	width    int
+	height   int
+	status   string
+	errMsg   string
 	// Selftest 由 --selftest 置位：全部任务到达终态后自动退出（无头验收）。
 	Selftest bool
 	// QuitReason 退出原因（selftest 用于判定退出码：ok/failed/user）。
@@ -116,14 +117,17 @@ type Model struct {
 	quitting   bool
 }
 
+// urlPlaceholder 任务 URL 输入框占位。
+const urlPlaceholder = "http://127.0.0.1/file/x.bin"
+
 // New 构造 Model。baseOpt 的 StateDir 为状态根目录。
 func New(baseOpt cli.Options) Model {
 	ti := textinput.New()
-	ti.Placeholder = "http://127.0.0.1/file/x.bin"
+	ti.Placeholder = urlPlaceholder
 	return Model{
 		input:   ti,
 		baseOpt: baseOpt,
-		status:  "a:添加任务 ↑/↓:选择 p:暂停/继续 d:删除 q:退出",
+		status:  "",
 	}
 }
 
@@ -175,10 +179,25 @@ func (m *Model) drainDone() {
 			default:
 				t.State = StateFailed
 				t.Err = err
+				// H-3 安全边界拒绝（公网 URL 默认不放行）：给出可行动指引，
+				// 否则用户只见「失败」与截断的行尾错误，无从下手。
+				if m.baseOpt.Proxy == "" && isLoopbackRefusal(err) {
+					m.errMsg = "目标被安全边界 (H-3) 拒绝（默认仅允许回环地址）。公网链接请按 x 配置代理出口，或启动时加 -proxy，然后按 p 重试。"
+				}
 			}
 		default:
 		}
 	}
+}
+
+// isLoopbackRefusal 判断错误是否因 H-3 回环边界拒绝而起。
+func isLoopbackRefusal(err error) bool {
+	if err == nil {
+		return false
+	}
+	s := err.Error()
+	return strings.Contains(s, "H-3") || strings.Contains(s, "not loopback") ||
+		strings.Contains(s, "non-loopback") || strings.Contains(s, "非回环")
 }
 
 // ---- 消息 ----
@@ -238,10 +257,13 @@ func isCanceled(err error) bool {
 }
 
 func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	if m.adding {
+	if m.adding || m.proxying {
 		switch msg.Type {
 		case tea.KeyEnter:
 			raw := strings.TrimSpace(m.input.Value())
+			if m.proxying {
+				return m.finishProxy(raw)
+			}
 			m.adding = false
 			m.input.Blur()
 			m.input.SetValue("")
@@ -263,7 +285,10 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		case tea.KeyEsc:
 			m.adding = false
+			m.proxying = false
 			m.input.Blur()
+			m.input.SetValue("")
+			m.input.Placeholder = urlPlaceholder
 			return m, nil
 		}
 		var cmd tea.Cmd
@@ -289,7 +314,8 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
-	switch msg.String() {
+	// 大小写兼容：Shift+a / Caps Lock 下 "A" 也匹配（Toast 键语义，大小写不敏感）。
+	switch strings.ToLower(msg.String()) {
 	case "q":
 		m.quitting = true
 		m.QuitReason = "user"
@@ -299,6 +325,13 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.adding = true
 		m.input.Focus()
 		m.input.SetValue("")
+		m.input.Placeholder = urlPlaceholder
+		return m, textinput.Blink
+	case "x":
+		m.proxying = true
+		m.input.Focus()
+		m.input.SetValue("")
+		m.input.Placeholder = "http://host:port 或 socks5://host:port（设置即视为允许公网出站）"
 		return m, textinput.Blink
 	case "p":
 		if len(m.tasks) == 0 || m.cursor >= len(m.tasks) {
@@ -330,6 +363,30 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return taskRemovedMsg{output: t.Output}
 		}
 	}
+	return m, nil
+}
+
+// finishProxy 提交代理配置（Enter）：空值清除代理；非空校验前缀并生效。
+// 与 CLI -proxy 同语义：显式设置代理即视为允许公网出站（network 层自动放行）。
+// 生效范围：之后新添加的任务与按 p 重试的任务（t.start 时读取 baseOpt）。
+func (m Model) finishProxy(raw string) (tea.Model, tea.Cmd) {
+	m.proxying = false
+	m.input.Blur()
+	m.input.SetValue("")
+	m.input.Placeholder = urlPlaceholder
+	if raw == "" {
+		m.baseOpt.Proxy = ""
+		m.status = "代理已清除（恢复默认：仅允许回环地址，公网链接将失败）"
+		return m, nil
+	}
+	if !strings.HasPrefix(raw, "http://") && !strings.HasPrefix(raw, "https://") &&
+		!strings.HasPrefix(raw, "socks5://") {
+		m.errMsg = "代理格式: http://host:port 或 https://host:port 或 socks5://host:port"
+		return m, nil
+	}
+	m.baseOpt.Proxy = raw
+	m.errMsg = ""
+	m.status = "代理出口 " + raw + "（公网放行；新任务与按 p 重试生效）"
 	return m, nil
 }
 

@@ -5,7 +5,9 @@
 //	downloader-tui [-state-dir DIR] [-limit bps] [-verify algo] [-mode default|max] [-n shards]
 //	               [-url URL]... [-out DIR] [-selftest]
 //
-// 交互：a 添加任务 / ↑↓ 选择 / p 暂停·继续 / d 删除 / q 退出。
+// 交互：a 添加任务 / ↑↓ 选择 / p 暂停·继续 / d 删除 / x 配置代理出口 / q 退出。
+// 安全边界 (H-3)：默认仅允许回环地址；公网链接需显式代理（-proxy 或界面内按 x），
+// 设置代理即视为允许出站。
 // --selftest：无头模式（预置 -url 自动下载，全部终态后自动退出，退出码 0=全部成功）。
 package main
 
