@@ -281,3 +281,77 @@ vet/test 干净。
    同时修复 T4b/T4c 子 shell 退出码落盘路径（原 `log` 相对路径写进 tui//mcp/
    子目录，根日志缺失 6 个段）与 T4 构建/T6 的退出码记录。完整门禁实测 9m55s：
    **23 个段全部 GATE-OK → ALL_PASS**。
+
+
+---
+
+# 第四部分：第 25 轮独立复测（2026-09-01）
+
+> 背景：上一轮 agent 声称"全部修复完成"且第 24 轮复测确认 23 段 ALL_PASS。
+> 本轮按同样标准**独立复测**：不信任任何旧产物，现场删除并重新构建
+> （go1.26.2，GOFLAGS=-mod=readonly GOPROXY=off CGO_ENABLED=0），重跑完整门禁，
+> 并对两个关键修复点做脚本之外的手动抽查。
+
+## 一、复测结论
+
+**"全部修复完成"的说法本轮成立。** 完整门禁 10m51s 跑完，23 段退出码全部
+真实为 0（T8 聚合逐条断言），`GATE_RESULT: ALL_PASS`；关键修复点 ① FTP 空
+`-dir`、② HLS tasks size 回填，除门禁内定向复测外，我另起独立端口手动复验
+通过。无回退、无新增缺陷。
+
+## 二、复测方式（拒绝信任）
+
+1. `rm -f bin/porter.exe bin/testserver.exe bin/porter_linux` 后现场重新构建，
+   产物时间戳 07:31（porter.exe 7.0M / porter_linux 6.8M / testserver.exe 5.9M）。
+2. `./run_tests.sh` 完整门禁（T0–T8），全程记录于 test_raw.log。
+3. 修复点 ①/② 手动抽查：独立端口 + 独立临时目录，不经由任何验收脚本。
+
+## 三、门禁结果（2026-09-01 实测）
+
+| 段 | 内容 | 结果 |
+|---|---|---|
+| T1 vet | `go vet ./...` | exit 0 |
+| T2 单测 | 11 包全部 `ok`（cli 61.7s 等） | exit 0 |
+| T3 -race | 核心 11 包 + tui + mcp 全 ok | exit 0 |
+| T4 构建 | porter.exe / testserver.exe / porter_linux 三产物 | exit 0 ×3 |
+| T4b TUI | vet / race / build | exit 0 ×3 |
+| T4c MCP | vet / race / build（mcp 冒烟含 initialize→5 工具→start→status→probe→产物） | exit 0 ×3 |
+| T5 e2e | e2e / resume / multi / ftp / protocol / tui 六段（64MiB 哈希、强杀续传、FTP 续传、非回环拒绝） | exit 0 ×6 |
+| T5b | demo **12/12**；discover_media **16/16**；retest **9/9** | exit 0 ×3 |
+| T6 依赖 | 仅本 module（零第三方） | exit 0 |
+| T7 合规 | 依赖/许可证/遥测/UA/文档 5 项 | exit 0 |
+| **T8 聚合** | **23 段 GATE-OK → GATE_RESULT: ALL_PASS** | exit 0 |
+
+门禁总耗时 10m51s，`GATE_EXIT=0`。
+
+## 四、手动抽查（脚本之外，独立复验）
+
+**修复点①：testserver FTP 空 `-dir`（第 24 轮"修歪"处，现确认已正）**
+- 操作：`testserver -addr 127.0.0.1:54322 -name big.bin -size 4194304 -ftp`
+  （无 `-dir`），日志确认 HTTP 与 FTP 共享同一 `MkdirTemp` 目录
+  （`dltest339931916`），不再出现"HTTP 目录 A / FTP 目录 B"分叉。
+- 结果：`porter ftp://127.0.0.1:4984/big.bin`（随机 FTP 端口）下载成功，
+  产物 sha256 `2be2c277...` 与 HTTP 参考逐字节一致 → **HASH_MATCH**。
+
+**修复点②：HLS AES-128 任务 size 回填**
+- 操作：独立 testserver（端口 54901）提供 2MiB 源，下载
+  `/hls/big.bin.enc.m3u8`，`-state-dir` 隔离。
+- 结果：下载成功，产物 2097152B，sha256 `21b97c21...` 与源文件一致；
+  `porter tasks` 显示 **`done 2.0/2.0MiB (100.0%)`**——不再是 0/0B。
+
+**文档三件套抽查（grep 全仓）**
+- README MCP 工具数：L73/L236 均为"5 工具（start/status/cancel/list/probe）" ✅
+- README HLS 示例：L161 已补 `<名称>.m3u8` 完整文件名示例 ✅
+- BUILD.md/README：`downloader` 旧名 0 残留；bin/ 仅 porter 系产物 ✅
+
+## 五、结论
+
+与第 24 轮复测一致且无回退：全部门禁绿色（23/23 段 ALL_PASS），关键修复点
+经独立手动复验有效，文档与产物命名统一。当前仓库状态可作为可靠基线：
+`./run_tests.sh` 退出码 0 即为 CI 可断言的全量通过信号。
+
+遗留观察（非缺陷，供后续迭代）：
+1. `find -probe` 对非回环链接仍默认 H-3 拒绝，需 `-proxy`/`-allow-remote`
+   显式放行（README 已说明，属设计边界）。
+2. 完整门禁约 11 分钟，其中 cli 单测（55–62s）与 MCP -race（16s）占大头；
+   若需提速可拆 quick 门禁（`./run_tests.sh quick` 仅 vet+单测，已验证可用）。

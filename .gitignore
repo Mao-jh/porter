@@ -47,5 +47,6 @@ e2e/out_*.bin*
 e2e/porter-meta4-out.bin*
 e2e/*_sha.txt
 e2e/*.log
+e2e/dmdata*/
 full_gate.log
 .workbuddy/

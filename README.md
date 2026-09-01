@@ -189,13 +189,15 @@ porter-mcp -state-root .porter-mcp    # stdio 传输，挂进任意 MCP 客户�
 ## 🔒 安全边界（重要）
 
 **默认仅允许 `127.0.0.0/8` 回环目标**（URL 校验 + 拨号双重强制，含域名解析断言）——
-这是本项目的审计边界。下载公网资源需显式打开产品开关：
+这是本项目的审计边界。下载公网资源需显式放行：
 
 ```bash
-porter-mcp -allow-remote     # 或 CLI/TUI 的对应选项
+porter-mcp -allow-remote              # MCP 服务端的产品开关（仅 MCP 有此参数）
+porter <url> -proxy http://host:port  # CLI/TUI 无 -allow-remote；公网目标需显式 -proxy 放行
 ```
 
 打开后即为常规下载器行为；默认关闭时，任何非回环目标在连接层被拒绝。
+`-proxy` 是 CLI/TUI 唯一的公网放行通道（设置代理即视为显式允许出站），MCP 两者皆可。
 安全政策与漏洞报告渠道：[SECURITY.md](SECURITY.md)；
 隐私（零遥测）、合法使用边界与协议行为自律：[COMPLIANCE.md](COMPLIANCE.md)。
 
