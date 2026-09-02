@@ -1406,3 +1406,192 @@ func TestFooterFollowsCursorAfterSelect(t *testing.T) {
 		t.Fatal("选中 done 后底栏应含打开键帽")
 	}
 }
+
+// swapOpenVars 替换 openPath/openDir 为记录器（测试注入），结束后自动还原。
+func swapOpenVars(t *testing.T) (paths, dirs *[]string) {
+	t.Helper()
+	origPath, origDir := openPath, openDir
+	p, d := []string{}, []string{}
+	openPath = func(pth string) error { p = append(p, pth); return nil }
+	openDir = func(pth string) error { d = append(d, pth); return nil }
+	t.Cleanup(func() { openPath, openDir = origPath, origDir })
+	return &p, &d
+}
+
+// TestVimKeysNavigation k/j 上下导航（§7.1），边界不越界。
+func TestVimKeysNavigation(t *testing.T) {
+	m := newTestModel(t)
+	m.tasks = []*Task{{URL: "u1", Output: "a"}, {URL: "u2", Output: "b"}, {URL: "u3", Output: "c"}}
+	m.cursor = 0
+	press := func(s string) {
+		km, _ := m.Update(keyRunes(s))
+		m = km.(Model)
+	}
+	press("j")
+	if m.cursor != 1 {
+		t.Fatalf("j 应下移, got %d", m.cursor)
+	}
+	press("j")
+	if m.cursor != 2 {
+		t.Fatalf("j 到末尾, got %d", m.cursor)
+	}
+	press("j")
+	if m.cursor != 2 {
+		t.Fatalf("末尾 j 不应越界, got %d", m.cursor)
+	}
+	press("k")
+	if m.cursor != 1 {
+		t.Fatalf("k 应上移, got %d", m.cursor)
+	}
+	press("k")
+	if m.cursor != 0 {
+		t.Fatalf("k 到顶, got %d", m.cursor)
+	}
+	press("k")
+	if m.cursor != 0 {
+		t.Fatalf("顶部 k 不应越界, got %d", m.cursor)
+	}
+}
+
+// TestOpenFileKey o 打开已完成文件；未完成任务仅提示不触发。
+func TestOpenFileKey(t *testing.T) {
+	m := newTestModel(t)
+	file := filepath.Join(t.TempDir(), "ok.bin")
+	if err := os.WriteFile(file, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	m.tasks = []*Task{
+		{URL: "u", Output: "run.bin", State: StateRunning},
+		{URL: "u", Output: file, State: StateDone},
+	}
+	paths, _ := swapOpenVars(t)
+	// 选中 running → 不打开，仅提示
+	m.cursor = 0
+	km, cmd := m.Update(keyRunes("o"))
+	m = km.(Model)
+	if cmd != nil {
+		cmd()
+	}
+	if len(*paths) != 0 {
+		t.Fatalf("未完成任务不应打开, got %v", *paths)
+	}
+	if !strings.Contains(m.status, "仅已完成") {
+		t.Fatalf("应提示仅已完成, got %q", m.status)
+	}
+	// 选中 done → 经 openPath 打开文件（执行返回的 Cmd）
+	m.cursor = 1
+	km, cmd = m.Update(keyRunes("o"))
+	m = km.(Model)
+	if cmd == nil {
+		t.Fatal("打开应返回 Cmd")
+	}
+	cmd()
+	if len(*paths) != 1 {
+		t.Fatalf("o 应触发一次打开, got %v", *paths)
+	}
+	if (*paths)[0] != file {
+		t.Fatalf("o 打开路径=%s want %s", (*paths)[0], file)
+	}
+}
+
+// TestOpenDirKey O 打开所在目录（Windows 定位文件语义，收到文件路径）。
+func TestOpenDirKey(t *testing.T) {
+	m := newTestModel(t)
+	file := filepath.Join(t.TempDir(), "ok.bin")
+	if err := os.WriteFile(file, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	m.tasks = []*Task{{URL: "u", Output: file, State: StateDone}}
+	_, dirs := swapOpenVars(t)
+	km, cmd := m.Update(keyRunes("O"))
+	m = km.(Model)
+	if cmd == nil {
+		t.Fatal("打开目录应返回 Cmd")
+	}
+	cmd()
+	if len(*dirs) != 1 {
+		t.Fatalf("O 应触发一次打开目录, got %v", *dirs)
+	}
+	if (*dirs)[0] != file {
+		t.Fatalf("O 目录路径=%s want %s", (*dirs)[0], file)
+	}
+	// 小写 o 应打开文件而非目录
+	paths, dirs2 := swapOpenVars(t)
+	km, cmd = m.Update(keyRunes("o"))
+	m = km.(Model)
+	if cmd != nil {
+		cmd()
+	}
+	if len(*dirs2) != 0 || len(*paths) != 1 {
+		t.Fatalf("小写 o 应打开文件而非目录, paths=%v dirs=%v", *paths, *dirs2)
+	}
+}
+
+// TestDetailToggleA i 键展开/收起布局 A 详情面板；j/k 详情内切换任务。
+func TestDetailToggleA(t *testing.T) {
+	m := newTestModel(t)
+	m.layoutAuto = false
+	m.layout = LayoutA
+	m.width, m.height = 100, 25
+	m.tasks = []*Task{
+		{URL: "http://127.0.0.1/d/one.bin", Output: "one.bin", State: StateRunning, Size: 1000, Done: 500},
+		{URL: "http://127.0.0.1/d/two.bin", Output: "two.bin", State: StateDone, Size: 1000, Done: 1000},
+	}
+	m.cursor = 0
+	if m.detailOpen {
+		t.Fatal("初始不应展开详情")
+	}
+	v := m.View()
+	if strings.Contains(v, "吞吐") {
+		t.Fatalf("未展开时不应有详情面板\n%s", v)
+	}
+	// i 展开
+	km, _ := m.Update(keyRunes("i"))
+	m = km.(Model)
+	if !m.detailOpen {
+		t.Fatal("按 i 应展开详情")
+	}
+	v = m.View()
+	for _, want := range []string{"one.bin", "吞吐", "分片", "URL"} {
+		if !strings.Contains(v, want) {
+			t.Errorf("详情面板缺少 %q\n%s", want, v)
+		}
+	}
+	// 详情内 j 切换任务 → 面板显示第二个任务
+	km, _ = m.Update(keyRunes("j"))
+	m = km.(Model)
+	if m.cursor != 1 {
+		t.Fatalf("详情内 j 应切到下一个任务, got %d", m.cursor)
+	}
+	v = m.View()
+	if !strings.Contains(v, "two.bin") {
+		t.Fatalf("详情面板应跟随选中任务\n%s", v)
+	}
+	// esc 收起
+	km, _ = m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	m = km.(Model)
+	if m.detailOpen {
+		t.Fatal("esc 应收起详情")
+	}
+	v = m.View()
+	if strings.Contains(v, "吞吐") {
+		t.Fatalf("收起后不应有详情面板\n%s", v)
+	}
+}
+
+// TestLayoutASelectZoneInDetail 详情模式不注册列表热区（避免误点）。
+func TestLayoutASelectZoneInDetail(t *testing.T) {
+	m := newTestModel(t)
+	m.layoutAuto = false
+	m.layout = LayoutA
+	m.width, m.height = 100, 25
+	m.tasks = []*Task{{URL: "u", Output: "a.bin", State: StateRunning}}
+	m.cursor = 0
+	m.detailOpen = true
+	m.View()
+	for _, z := range lastFrame.rows {
+		if z.action == "select" {
+			t.Fatalf("详情模式不应注册列表热区: %+v", z)
+		}
+	}
+}

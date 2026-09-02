@@ -8,32 +8,9 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
-var (
-	styleTitle   = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("12"))
-	styleCursor  = lipgloss.NewStyle().Foreground(lipgloss.Color("10"))
-	styleBarRest = lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
-	styleDone    = lipgloss.NewStyle().Foreground(lipgloss.Color("12")) // 蓝：完成
-	styleFail    = lipgloss.NewStyle().Foreground(lipgloss.Color("9"))  // 红：失败
-	stylePause   = lipgloss.NewStyle().Foreground(lipgloss.Color("11")) // 黄：暂停
-	styleRun     = lipgloss.NewStyle().Foreground(lipgloss.Color("10")) // 绿：下载中
-	styleDim     = lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
-	styleErr     = lipgloss.NewStyle().Foreground(lipgloss.Color("9"))
-	styleBtn     = lipgloss.NewStyle().Foreground(lipgloss.Color("14")) // 亮青：暂停/继续
-	styleBtnDel  = lipgloss.NewStyle().Foreground(lipgloss.Color("9"))  // 红：删除
-	styleMeta    = lipgloss.NewStyle().Foreground(lipgloss.Color("13")) // 紫：磁力解析状态
-	styleFooter  = lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
-	stylePanel   = lipgloss.NewStyle().
-			Border(lipgloss.RoundedBorder()).
-			BorderForeground(lipgloss.Color("240")).
-			Padding(0, 1)
-)
-
-// protoStyle 协议标签配色：HTTP 青 / BT 绿 / 磁力 紫（一眼区分任务类型）。
-var protoStyle = map[string]lipgloss.Style{
-	"http":   lipgloss.NewStyle().Foreground(lipgloss.Color("14")),
-	"bt":     lipgloss.NewStyle().Foreground(lipgloss.Color("10")),
-	"magnet": lipgloss.NewStyle().Foreground(lipgloss.Color("13")),
-}
+// 注意：本文件不再定义硬编码色值的包级 style（§11 "所有颜色走 token"）。
+// 需要着色的地方一律经 tokens.go 的 col*()（渲染时求值，受终端颜色能力影响）
+// 或 st/stBold/stFgBg 等助手现场构造。
 
 // protoTag 协议短标签（未知协议不渲染标签列，宽度顺延）。
 var protoTag = map[string]string{"http": "HTTP", "bt": "BT", "magnet": "磁力"}
@@ -220,18 +197,6 @@ func cleanErr(err error) string {
 	return strings.Join(strings.Fields(err.Error()), " ")
 }
 
-// barColor 按完成比例选进度条颜色（兼容保留，新布局用 barColorOf 状态语义色）。
-func barColor(frac float64) lipgloss.Style {
-	switch {
-	case frac >= 0.70:
-		return lipgloss.NewStyle().Foreground(lipgloss.Color("10"))
-	case frac >= 0.30:
-		return lipgloss.NewStyle().Foreground(lipgloss.Color("11"))
-	default:
-		return lipgloss.NewStyle().Foreground(lipgloss.Color("9"))
-	}
-}
-
 func trunc(s string, n int) string {
 	r := []rune(s)
 	if len(r) <= n {
@@ -279,13 +244,13 @@ func formatETA(secs int64) string {
 // 面板保持键盘交互（鼠标热区不覆盖设置面板，见 handleMouse）。
 func (m Model) renderSettings() string {
 	var rows []string
-	rows = append(rows, styleTitle.Render("设置  ")+
-		styleDim.Render("Enter/空格:切换档位  ↑/↓:选择  q/Esc:关闭"))
+	rows = append(rows, stBold(colTxt()).Render("设置  ")+
+		st(colDim()).Render("Enter/空格:切换档位  ↑/↓:选择  q/Esc:关闭"))
 	if m.errMsg != "" {
-		rows = append(rows, styleErr.Render("提示: "+m.errMsg))
+		rows = append(rows, st(colRed()).Render("提示: "+m.errMsg))
 	}
 	if m.settingCustom {
-		rows = append(rows, styleDim.Render("自定义值> ")+m.input.View())
+		rows = append(rows, st(colDim()).Render("自定义值> ")+m.input.View())
 	} else {
 		rows = append(rows, "")
 	}
@@ -302,7 +267,7 @@ func (m Model) renderSettings() string {
 	for i, r := range rows2 {
 		prefix := "  "
 		if i == m.settingRow {
-			prefix = styleCursor.Render("> ")
+			prefix = stBold(colFocus()).Render("> ")
 		}
 		var b strings.Builder
 		b.WriteString(prefix + fmt.Sprintf("%-4s", r.name) + " ")
@@ -312,7 +277,7 @@ func (m Model) renderSettings() string {
 		}
 		for j, lbl := range r.labels {
 			if j == highlight {
-				b.WriteString("[" + styleCursor.Render(lbl) + "]")
+				b.WriteString("[" + stBold(colFocus()).Render(lbl) + "]")
 			} else {
 				b.WriteString(lbl)
 			}
@@ -327,9 +292,18 @@ func (m Model) renderSettings() string {
 				2: "(" + string(m.baseOpt.Verify) + ")",
 				3: "(" + m.baseOpt.Proxy + ")",
 			}
-			b.WriteString(" " + styleDim.Render(extra[i]))
+			b.WriteString(" " + st(colDim()).Render(extra[i]))
 		}
 		rows = append(rows, b.String())
 	}
-	return stylePanel.Render(strings.Join(rows, "\n"))
+	return panelStyle().Render(strings.Join(rows, "\n"))
+}
+
+// panelStyle 圆角边框面板（设置面板/详情等通用，§4.5 [SHOULD] 走 token）。
+func panelStyle() lipgloss.Style {
+	return lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(colBorder()).
+		Background(colPanel()).
+		Padding(0, 1)
 }

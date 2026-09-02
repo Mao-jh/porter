@@ -43,8 +43,20 @@ var itemYs = []int{3, 7, 11, 15, 19, 23, 27, 31}
 
 // renderLayoutA 紧凑单列：每项 3 行 + 1 间隙，无边框卡片式。
 // 总高 h = header 2 + main (h-4) + footer 2。
+// i 键详情模式（detailOpen）：整区显示选中任务详情面板（§7.1，j/k 可切换任务）。
 func (m Model) renderLayoutA(w, h int) []string {
 	var rows []string
+	// i 键详情模式：全高渲染 B 右栏面板，顶部给操作提示
+	if m.detailOpen && m.cursor >= 0 && m.cursor < len(m.tasks) {
+		hint := " " + st(colDim()).Render("i/esc 收起详情 · ↑↓/k j 切换任务 · p 暂停/继续 · d 删除")
+		rows = append(rows, fillRow(hint, w, colBg()))
+		g := m.buildDetailGrid(0, w-4, h-6)
+		rows = append(rows, rowsFromGrid(g)...)
+		for len(rows) < h-4 {
+			rows = append(rows, emptyLine(w, colBg()))
+		}
+		return rows
+	}
 	// 任务区起始 y=3（header 2 行 + 1 空行），底部留 footer 2 行
 	rows = append(rows, emptyLine(w, colBg())) // 屏 y=2
 	vis := m.visibleOrder()
@@ -61,7 +73,7 @@ func (m Model) renderLayoutA(w, h int) []string {
 		rows = append(rows, m.renderItemA(m.tasks[i], i, w)...)
 		// 错误详情展开行（点击失败行 toggle，R33）
 		if m.expandedErr == i && m.tasks[i].Err != nil {
-			detail := "  " + styleErr.Render(cleanErr(m.tasks[i].Err))
+			detail := "  " + st(colRed()).Render(cleanErr(m.tasks[i].Err))
 			rows = append(rows, fillRow(detail, w, colBg()))
 			m.zoneRow(zoneY+3, i)
 		}

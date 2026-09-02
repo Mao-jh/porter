@@ -16,8 +16,10 @@ import (
 	"fmt"
 	"net/url"
 	"os"
+	"os/exec"
 	"path"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"time"
@@ -156,6 +158,7 @@ type Model struct {
 	layout     LayoutID // 当前布局 A/B/C
 	layoutAuto bool     // true=按宽度自动；false=Tab/123 手动固定
 	lastW      int      // 上次应用宽度的基准（换边重算自动布局）
+	detailOpen bool     // i 键：布局 A 下展开详情面板（§7.1）
 
 	// ---- 可视化数据 ----
 	globalSpeed *speedRing // 全局速度（120 笔 = 2 分钟，header / 方案 C）
@@ -487,6 +490,53 @@ func (m Model) deleteTask(i int) (tea.Model, tea.Cmd) {
 	}
 }
 
+// openTaskFile 打开已下载文件（o 键）：仅完成态；文件存在则经系统默认程序打开。
+// 打开动作放 Cmd（goroutine），状态提示同步设置，避免阻塞 UI 循环。
+func (m Model) openTaskFile(t *Task) (tea.Model, tea.Cmd) {
+	p := t.Output
+	if _, err := os.Stat(p); err != nil {
+		m.status = "文件不存在: " + baseName(p)
+		return m, nil
+	}
+	m.status = "打开 " + baseName(p)
+	return m, func() tea.Msg { _ = openPath(p); return nil }
+}
+
+// openTaskDir 打开所在目录（O 键）：Windows 用 explorer 定位文件，其余平台打开目录。
+func (m Model) openTaskDir(t *Task) (tea.Model, tea.Cmd) {
+	p := t.Output
+	dir := filepath.Dir(p)
+	if _, err := os.Stat(dir); err != nil {
+		m.status = "目录不存在: " + dir
+		return m, nil
+	}
+	m.status = "打开目录 " + dir
+	return m, func() tea.Msg { _ = openDir(p); return nil }
+}
+
+// openPath / openDir 为可替换变量（测试注入假实现）；跨平台调用系统默认程序。
+var (
+	openPath = func(p string) error {
+		var cmd string
+		var args []string
+		switch runtime.GOOS {
+		case "windows":
+			cmd, args = "rundll32.exe", []string{"url.dll,FileProtocolHandler", p}
+		case "darwin":
+			cmd, args = "open", []string{p}
+		default:
+			cmd, args = "xdg-open", []string{p}
+		}
+		return exec.Command(cmd, args...).Start()
+	}
+	openDir = func(p string) error {
+		if runtime.GOOS == "windows" {
+			return exec.Command("explorer.exe", "/select,"+p).Start()
+		}
+		return openPath(p)
+	}
+)
+
 func isCanceled(err error) bool {
 	if err == nil {
 		return false
@@ -671,12 +721,44 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.layoutAuto = false // 手动覆盖，不再随宽度自动
 		m.layout = nextLayout(m.layout)
 		return m, nil
+	case tea.KeyEsc: // 详情模式收起（§7.1 i 提示 esc）
+		if m.detailOpen {
+			m.detailOpen = false
+			return m, nil
+		}
 	case tea.KeyRunes:
 		switch string(msg.Runes) {
 		case "1", "2", "3":
 			m.layoutAuto = false
 			m.layout = LayoutID(msg.Runes[0] - '1')
 			return m, nil
+		case "j": // vi 式向下导航（§7.1 k/j）
+			if m.cursor < len(m.tasks)-1 {
+				m.cursor++
+			}
+			return m, nil
+		case "k": // vi 式向上导航（§7.1 k/j）
+			if m.cursor > 0 {
+				m.cursor--
+			}
+			return m, nil
+		case "i": // 详情面板开关（§7.1：布局 A 下展开为 B 右栏）
+			m.detailOpen = !m.detailOpen
+			m.expandedErr = -1
+			return m, nil
+		case "o", "O": // o 打开文件 / O 打开所在目录（§7.1，仅已完成任务）
+			if len(m.tasks) == 0 || m.cursor >= len(m.tasks) {
+				return m, nil
+			}
+			t := m.tasks[m.cursor]
+			if t.State != StateDone {
+				m.status = "仅已完成任务可打开"
+				return m, nil
+			}
+			if string(msg.Runes) == "O" {
+				return m.openTaskDir(t)
+			}
+			return m.openTaskFile(t)
 		}
 	}
 
