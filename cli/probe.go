@@ -81,15 +81,10 @@ func FinalURLFor(ctx context.Context, proxy, cookieFile string, allowRemote bool
 	return tr.FinalURL(ctx, urlStr)
 }
 
-// RunProbe 探测每个 URL 并打印：
-//
-//	url=<原 URL>
-//	size=<字节数，0=未知>
-//	ranged=<true|false>
-//	name=<服务端建议文件名>（仅 http(s) 且有 Content-Disposition 时输出）
-//	final_url=<重定向后最终地址>（仅 http(s) 且与输入不同时输出；对标 wget --spider）
-//
-// 任一 URL 探测失败即返回聚合错误（退出码 1），其余 URL 仍继续探测。
+// RunProbe 探测每个 URL：
+//   - table（默认）：key=value 人类/脚本友好输出；
+//   - json|ndjson：统一封套（type=probe.list），data 为逐 URL 结果，
+//     任一失败 → 退出码非零，但成功项与错误项都进封套（显式声明部分失败）。
 func RunProbe(ctx context.Context, opt *Options) error {
 	if opt == nil || len(opt.URLs) == 0 {
 		return errors.New("probe: 未提供 URL")
@@ -100,6 +95,14 @@ func RunProbe(ctx context.Context, opt *Options) error {
 	}
 	fetch := network.NewMux(tr, false)
 
+	type probeItem struct {
+		URL      string `json:"url"`
+		Size     int64  `json:"size_bytes"`
+		Ranged   bool   `json:"ranged"`
+		Name     string `json:"name,omitempty"`     // 服务端建议文件名（Content-Disposition）
+		FinalURL string `json:"final_url,omitempty"` // 重定向后最终地址（与输入不同时）
+	}
+	items := make([]probeItem, 0, len(opt.URLs))
 	var errs []error
 	for _, u := range opt.URLs {
 		size, ranged, err := fetch.Probe(ctx, u)
@@ -107,15 +110,35 @@ func RunProbe(ctx context.Context, opt *Options) error {
 			errs = append(errs, fmt.Errorf("%s: %w", u, err))
 			continue
 		}
-		fmt.Fprintf(os.Stdout, "url=%s\nsize=%d\nranged=%v\n", u, size, ranged)
+		item := probeItem{URL: u, Size: size, Ranged: ranged}
 		if strings.HasPrefix(u, "http://") || strings.HasPrefix(u, "https://") {
-			if name := tr.ContentFilename(ctx, u); name != "" {
-				fmt.Fprintf(os.Stdout, "name=%s\n", name)
-			}
+			item.Name = tr.ContentFilename(ctx, u)
 			if final := tr.FinalURL(ctx, u); final != "" && final != u {
-				fmt.Fprintf(os.Stdout, "final_url=%s\n", final)
+				item.FinalURL = final
 			}
 		}
+		items = append(items, item)
+	}
+	if opt.outMode() == OutputTable {
+		for _, item := range items {
+			fmt.Fprintf(os.Stdout, "url=%s\nsize=%d\nranged=%v\n", item.URL, item.Size, item.Ranged)
+			if item.Name != "" {
+				fmt.Fprintf(os.Stdout, "name=%s\n", item.Name)
+			}
+			if item.FinalURL != "" {
+				fmt.Fprintf(os.Stdout, "final_url=%s\n", item.FinalURL)
+			}
+		}
+	} else {
+		env := OKEnv("probe.list", items)
+		env.Meta.Command = "porter probe"
+		for _, e := range errs {
+			env.Errors = append(env.Errors, Classify(e, "porter probe"))
+		}
+		if len(env.Errors) > 0 {
+			env.OK = false
+		}
+		_ = Emit(os.Stdout, opt.outMode(), env)
 	}
 	return errors.Join(errs...)
 }

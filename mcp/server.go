@@ -17,6 +17,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"net"
 	"net/url"
 	"os"
 	"path"
@@ -149,6 +150,14 @@ func (d *Downloader) Probe(ctx context.Context, urlStr string) (DownloadProbeOut
 		if final := cli.FinalURLFor(ctx, d.cfg.Proxy, d.cfg.CookieFile,
 			d.cfg.AllowRemote, nil, urlStr); final != "" && final != urlStr {
 			out.FinalURL = final
+			// 重定向资源：原始 URL 的 HEAD 无 Content-Disposition（302 无此头），
+			// 建议名只能从最终资源取（CDN/对象存储常见）。
+			if out.Name == "" {
+				if _, _, n2, err := cli.ProbeURL(ctx, d.cfg.Proxy, d.cfg.CookieFile,
+					d.cfg.AllowRemote, nil, final); err == nil && n2 != "" {
+					out.Name = n2
+				}
+			}
 		}
 	}
 	return out, nil
@@ -179,6 +188,17 @@ func (d *Downloader) Start(urlStr, outputDir string, limitBps int64) (DownloadSt
 	if !startsWithAnyScheme(urlStr, "http://", "https://", "ftp://", "ftps://", "file://") {
 		return DownloadStartOut{}, fmt.Errorf("仅支持 http/https/ftp/ftps/file URL: %s", urlStr)
 	}
+	// AI-first：本地可判定的 URL 语法错误同步拒绝（此前非法 URL 语法如
+	// "http://[::1" 会启动为 running，AI 需轮询才发现失败，浪费一次往返）。
+	// checkLoopbackSync 只解析 host，语法错误（url.Parse 失败）在此兜底。
+	if _, err := url.Parse(urlStr); err != nil {
+		return DownloadStartOut{}, fmt.Errorf("URL 语法非法: %q（无法解析）: %v", urlStr, err)
+	}
+	// AI-first：H-3 同步拒绝。非法公网目标在 download_start 立即报错，
+	// 不让 AI 等轮询才发现失败（错误文案与引擎一致，AI 可识别）。
+	if err := checkLoopbackSync(urlStr, d.cfg.AllowRemote); err != nil {
+		return DownloadStartOut{}, err
+	}
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	d.seq++
@@ -186,6 +206,11 @@ func (d *Downloader) Start(urlStr, outputDir string, limitBps int64) (DownloadSt
 	dir := outputDir
 	if dir == "" {
 		dir = d.cfg.OutputDir
+	}
+	// AI-first：输出目录不存在则自动创建（CLI 遵循 curl 语义不建目录；
+	// MCP 只有工具没有 shell，AI 无法自行 mkdir，故服务端代建）。
+	if dir != "" {
+		_ = os.MkdirAll(dir, 0o755)
 	}
 	output := filepath.Join(dir, deriveOutputName(urlStr))
 	stateDir := d.stateDirFor(urlStr)
@@ -230,6 +255,45 @@ func startsWithAnyScheme(s string, prefixes ...string) bool {
 		}
 	}
 	return false
+}
+
+// checkLoopbackSync 同步回环校验（H-3）：allowRemote=false 时，解析目标 host，
+// 只要解析出任一非回环 IP 即拒绝。错误文案与引擎一致（AI 可识别 H-3）。
+// file:// 跳过（本地文件无网络目标）；解析失败交给引擎后续报错。
+func checkLoopbackSync(raw string, allowRemote bool) error {
+	if allowRemote {
+		return nil
+	}
+	if startsWithAnyScheme(raw, "file://") {
+		return nil
+	}
+	u, err := url.Parse(raw)
+	if err != nil {
+		return nil
+	}
+	host := u.Hostname()
+	if host == "" {
+		return nil
+	}
+	reject := func(candidate net.IP) error {
+		return fmt.Errorf("host %s resolves to non-loopback %s (H-3)", host, candidate)
+	}
+	if ip := net.ParseIP(host); ip != nil {
+		if !ip.IsLoopback() {
+			return reject(ip)
+		}
+		return nil
+	}
+	ips, err := net.LookupIP(host)
+	if err != nil {
+		return nil // DNS 失败交给引擎（可能瞬时/配置问题，不当即误杀）
+	}
+	for _, ip := range ips {
+		if !ip.IsLoopback() {
+			return reject(ip)
+		}
+	}
+	return nil
 }
 
 // Cancel 取消运行中的任务（引擎取消路径，进度已落盘；重新 Start 同 URL 即续传）。

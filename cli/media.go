@@ -8,6 +8,7 @@ package cli
 import (
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"strings"
 
@@ -17,6 +18,7 @@ import (
 // RunInfo 输出媒体信息预览（kind/size/duration/resolution/codec/...）。
 func RunInfo(args []string) error {
 	fs := flag.NewFlagSet("info", flag.ContinueOnError)
+	fs.SetOutput(io.Discard) // AI-first：吞 flag 包 usage 打印
 	if err := fs.Parse(flagFirst(args)); err != nil {
 		return err
 	}
@@ -37,6 +39,7 @@ func RunInfo(args []string) error {
 // RunTranscode 调用系统 ffmpeg 转码。
 func RunTranscode(args []string) error {
 	fs := flag.NewFlagSet("transcode", flag.ContinueOnError)
+	fs.SetOutput(io.Discard) // AI-first：吞 flag 包 usage 打印
 	to := fs.String("to", "", "目标格式（mp3/m4a/aac/flac/wav/ogg/mp4/mov/webm/mkv）")
 	crf := fs.Int("crf", 0, "视频质量 0-51（默认 23，仅视频输出）")
 	q := fs.Int("q", 2, "音频质量 0-9（默认 2，仅音频输出）")
@@ -64,6 +67,7 @@ func RunTranscode(args []string) error {
 // RunOrganize 按类型归类整理下载目录。
 func RunOrganize(args []string) error {
 	fs := flag.NewFlagSet("organize", flag.ContinueOnError)
+	fs.SetOutput(io.Discard) // AI-first：吞 flag 包 usage 打印
 	dry := fs.Bool("dry-run", false, "仅打印计划，不实际移动")
 	dedupe := fs.Bool("dedupe", false, "按 sha256 去重（重复文件移入 .dupes/）")
 	recurse := fs.Bool("r", false, "递归处理子目录")
@@ -100,6 +104,7 @@ func RunOrganize(args []string) error {
 // RunClean 清理下载目录广告/垃圾文件。
 func RunClean(args []string) error {
 	fs := flag.NewFlagSet("clean", flag.ContinueOnError)
+	fs.SetOutput(io.Discard) // AI-first：吞 flag 包 usage 打印
 	dry := fs.Bool("dry-run", false, "仅打印计划，不实际移动")
 	if err := fs.Parse(flagFirst(args)); err != nil {
 		return err

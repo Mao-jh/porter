@@ -11,6 +11,7 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -25,6 +26,9 @@ import (
 
 // parseDiscoverFlags 解析发现子命令共用旗标（-proxy / -load-cookies / -H）。
 func parseDiscoverFlags(fs *flag.FlagSet, args []string, posLimit int) (proxy, cookie string, headers map[string]string, pos []string, err error) {
+	// AI-first：与 cli.Parse 同策略，吞掉 flag 包自动 usage 打印（避免大段帮助
+	// 文本淹没真实错误）；调用方单行输出错误。
+	fs.SetOutput(io.Discard)
 	args = flagFirst(args)
 	pProxy := fs.String("proxy", "", "代理出口（设置即视为允许出站）")
 	pCookie := fs.String("load-cookies", "", "Netscape cookie.txt")
@@ -128,6 +132,7 @@ func RunFind(ctx context.Context, args []string) error {
 	pageSeen := map[string]struct{}{}
 	linkSeen := map[string]struct{}{}
 	queue := []string{pageURL}
+	var fetchErrs []error
 	for d := 0; d < *depth && len(queue) > 0; d++ {
 		level := queue
 		queue = nil
@@ -139,6 +144,7 @@ func RunFind(ctx context.Context, args []string) error {
 			hits, err := discover.FindLinksInPage(ctx, tr, u, *max, filter)
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "find: 抓取 %s 失败: %v\n", u, err)
+				fetchErrs = append(fetchErrs, fmt.Errorf("抓取 %s 失败: %w", u, err))
 				continue
 			}
 			for _, link := range hits.Links {
@@ -162,7 +168,9 @@ func RunFind(ctx context.Context, args []string) error {
 			}
 		}
 	}
-	return nil
+	// AI-first：页面抓取失败必须反映到退出码（此前静默 continue 返回 nil，
+	// AI 从 exit=0 无法得知整站发现失败）。部分成功仍返回错误（errors.Join）。
+	return errors.Join(fetchErrs...)
 }
 
 // --- ls -----------------------------------------------------------
@@ -231,6 +239,7 @@ func RunLS(ctx context.Context, args []string) error {
 // RunBookmarks 解析 Netscape 书签 HTML，输出去重 URL 列表。
 func RunBookmarks(args []string) error {
 	fs := flag.NewFlagSet("bookmarks", flag.ContinueOnError)
+	fs.SetOutput(io.Discard) // AI-first：吞 flag 包 usage 打印
 	out := fs.String("out", "", "输出文件（默认 stdout；可作 -i 列表文件）")
 	if err := fs.Parse(flagFirst(args)); err != nil {
 		return err
@@ -268,6 +277,7 @@ func RunBookmarks(args []string) error {
 // RunExtract 从文件（- 或空=stdin）提取 URL，每行一个。
 func RunExtract(args []string) error {
 	fs := flag.NewFlagSet("extract", flag.ContinueOnError)
+	fs.SetOutput(io.Discard) // AI-first：吞 flag 包 usage 打印
 	out := fs.String("out", "", "输出文件（默认 stdout）")
 	if err := fs.Parse(flagFirst(args)); err != nil {
 		return err
@@ -308,6 +318,7 @@ func RunExtract(args []string) error {
 // RunTorrent 解析 .torrent 或磁力链接并输出元数据。
 func RunTorrent(args []string) error {
 	fs := flag.NewFlagSet("torrent", flag.ContinueOnError)
+	fs.SetOutput(io.Discard) // AI-first：吞 flag 包 usage 打印
 	if err := fs.Parse(flagFirst(args)); err != nil {
 		return err
 	}

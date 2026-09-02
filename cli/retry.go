@@ -9,6 +9,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"sort"
 
@@ -20,6 +21,7 @@ import (
 // ParseRetry 解析 retry 子命令参数（无 URL 位置参数；任务清单来自状态目录）。
 func ParseRetry(args []string) (*Options, error) {
 	fs := flag.NewFlagSet("retry", flag.ContinueOnError)
+	fs.SetOutput(io.Discard) // AI-first：吞 flag 包 usage 打印（与 cli.Parse 同策略）
 	var (
 		stateDir = fs.String("state-dir", ".downloader", "任务状态持久化目录（须与下载时一致）")
 		limit    = fs.Int64("limit", 0, "全局下载限速 字节/秒（0=不限）")

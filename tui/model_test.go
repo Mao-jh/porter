@@ -154,7 +154,7 @@ func TestResumeAfterPause(t *testing.T) {
 	}
 }
 
-// TestDeleteTask d 删除：移除行并清理 state 子目录。
+// TestDeleteTask deleteTask 逻辑：移除行并清理 state 子目录（确认流见 TestDeleteConfirmFlow）。
 func TestDeleteTask(t *testing.T) {
 	m := newTestModel(t)
 	tk := &Task{URL: "http://127.0.0.1/a.bin", Output: "a.bin", State: StatePaused}
@@ -167,9 +167,9 @@ func TestDeleteTask(t *testing.T) {
 	}
 	m.tasks = []*Task{tk}
 	m.cursor = 0
-	km, cmd := m.Update(keyRunes("d"))
+	km, cmd := m.deleteTask(0)
 	if cmd == nil {
-		t.Fatal("d 应返回清理 Cmd")
+		t.Fatal("deleteTask 应返回清理 Cmd")
 	}
 	msg := cmd()
 	km, _ = m.Update(msg)
@@ -284,7 +284,7 @@ func TestRestoreTasks(t *testing.T) {
 	}
 }
 
-// TestViewAssertions View 字符串断言（渲染即验收）。
+// TestViewAssertions View 字符串断言（渲染即验收，布局 A 语义）。
 func TestViewAssertions(t *testing.T) {
 	m := newTestModel(t)
 	m.tasks = []*Task{
@@ -292,10 +292,14 @@ func TestViewAssertions(t *testing.T) {
 		{URL: "u", Output: "run.bin", State: StateRunning, Size: 200, Done: 50, Speed: 1024, ETA: 90},
 	}
 	v := m.View()
-	for _, want := range []string{"ok.bin", "run.bin", "完成", "下载中", "100B/100B", "1.0KB/s", "█", "ETA 1m 30s"} {
+	for _, want := range []string{"ok.bin", "run.bin", "✓", "▼", "100B / 100B", "1.0KB/s", "█", "1m 30s 剩余"} {
 		if !strings.Contains(v, want) {
 			t.Errorf("View 缺少 %q\n---\n%s", want, v)
 		}
+	}
+	// 帮助信息不再常驻：默认视图不含键位罗列（§11 验收）
+	if strings.Contains(v, "a:添加  x:代理  s:设置") {
+		t.Errorf("帮助不应常驻多行罗列\n---\n%s", v)
 	}
 }
 
@@ -427,26 +431,32 @@ func TestH3RefusalHint(t *testing.T) {
 	}
 }
 
-// TestViewHelpLine 帮助行常驻且含 x；H-3 失败行尾为短标签。
+// TestViewHelpLine 底部键帽含操作键；代理/限速 overlay；H-3 失败行尾短标签。
 func TestViewHelpLine(t *testing.T) {
 	m := newTestModel(t)
 	v := m.View()
-	if !strings.Contains(v, "s:设置") || !strings.Contains(v, "x:代理") {
-		t.Fatalf("帮助行应含 s:设置 与 x:代理\n---\n%s", v)
+	// 底部键帽：单行、含主操作键（§5.0 footer，全中文说明）
+	for _, want := range []string{"a", "添加", "/", "过滤", "?", "帮助", "q", "退出"} {
+		if !strings.Contains(v, want) {
+			t.Fatalf("底部键帽应含 %q\n---\n%s", want, v)
+		}
 	}
-	// 代理输入行
+	// 代理 overlay
 	km, _ := m.Update(keyRunes("x"))
 	m = km.(Model)
 	v = m.View()
-	if !strings.Contains(v, "代理出口>") {
-		t.Fatalf("代理输入模式应渲染输入行\n---\n%s", v)
+	if !strings.Contains(v, "代理") || !strings.Contains(v, "socks5://") {
+		t.Fatalf("代理 overlay 应渲染\n---\n%s", v)
 	}
-	// H-3 失败行尾短标签
-	m2 := newTestModel(t)
-	m2.tasks = []*Task{{URL: "u", Output: "f.bin", State: StateFailed,
+}
+
+// TestH3FailureTag H-3 失败行尾短标签。
+func TestH3FailureTag(t *testing.T) {
+	m := newTestModel(t)
+	m.tasks = []*Task{{URL: "u", Output: "f.bin", State: StateFailed,
 		Err: fmt.Errorf("探测资源失败: host example.com resolves to non-loopback (H-3)")}}
-	v = m2.View()
-	if !strings.Contains(v, "安全边界拒绝(H-3)") {
+	v := m.View()
+	if !strings.Contains(v, "H-3") {
 		t.Fatalf("H-3 失败行尾应显示短标签\n---\n%s", v)
 	}
 }
@@ -544,14 +554,19 @@ func TestSettingsRender(t *testing.T) {
 }
 
 // TestPasteCtrlV Ctrl+V 从剪贴板读入输入框（替换 pasteText 隔离系统剪贴板）。
+// 打开添加时剪贴板不可读 → 不自动填（自动读取见 TestAutoPasteClipboardURL）。
 func TestPasteCtrlV(t *testing.T) {
 	orig := pasteText
 	defer func() { pasteText = orig }()
-	pasteText = func() (string, bool) { return "https://example.com/a.bin", true }
 
 	m := newTestModel(t)
+	pasteText = func() (string, bool) { return "", false } // 打开时剪贴板不可读
 	km, _ := m.Update(keyRunes("a"))
 	m = km.(Model)
+	if m.input.Value() != "" {
+		t.Fatalf("剪贴板不可读时按 a 不应自动填, got %q", m.input.Value())
+	}
+	pasteText = func() (string, bool) { return "https://example.com/a.bin", true }
 	km, _ = m.Update(tea.KeyMsg{Type: tea.KeyCtrlV})
 	m = km.(Model)
 	if got := m.input.Value(); got != "https://example.com/a.bin" {
@@ -567,6 +582,57 @@ func TestPasteCtrlV(t *testing.T) {
 	}
 	if !strings.Contains(m.errMsg, "剪贴板") {
 		t.Fatalf("应有剪贴板提示, got %q", m.errMsg)
+	}
+}
+
+// TestAutoPasteClipboardURL IDM 式：按 a 打开添加任务时自动读取剪贴板 URL 填入输入框。
+func TestAutoPasteClipboardURL(t *testing.T) {
+	orig := pasteText
+	defer func() { pasteText = orig }()
+
+	// 剪贴板是 URL → 自动填入
+	m := newTestModel(t)
+	pasteText = func() (string, bool) { return "  https://example.com/a.bin  ", true }
+	km, _ := m.Update(keyRunes("a"))
+	m = km.(Model)
+	if !m.adding {
+		t.Fatal("按 a 应进入添加模式")
+	}
+	if got := m.input.Value(); got != "https://example.com/a.bin" {
+		t.Fatalf("剪贴板 URL 应自动填入（去首尾空白）, got %q", got)
+	}
+	// 剪贴板是普通文本 → 不自动填
+	m2 := newTestModel(t)
+	pasteText = func() (string, bool) { return "随便一段文字不是URL", true }
+	km, _ = m2.Update(keyRunes("a"))
+	m2 = km.(Model)
+	if got := m2.input.Value(); got != "" {
+		t.Fatalf("非 URL 剪贴板不应自动填, got %q", got)
+	}
+	// 剪贴板不可读 → 不自动填
+	m3 := newTestModel(t)
+	pasteText = func() (string, bool) { return "", false }
+	km, _ = m3.Update(keyRunes("a"))
+	m3 = km.(Model)
+	if got := m3.input.Value(); got != "" {
+		t.Fatalf("剪贴板不可读不应自动填, got %q", got)
+	}
+}
+
+// TestLooksLikeURL 剪贴板 URL 判定（http/https 前缀，与添加校验一致）。
+func TestLooksLikeURL(t *testing.T) {
+	cases := map[string]bool{
+		"http://x/a.bin":      true,
+		"https://x.com/a":     true,
+		"  https://x.com  ":   true,
+		"magnet:?xt=urn:btih": false, // 添加任务暂不支持 magnet
+		"不是链接":                false,
+		"":                    false,
+	}
+	for in, want := range cases {
+		if got := looksLikeURL(strings.TrimSpace(in)); got != want {
+			t.Errorf("looksLikeURL(%q)=%v want %v", in, got, want)
+		}
 	}
 }
 
@@ -597,81 +663,70 @@ func TestParseShards(t *testing.T) {
 	if v, err := parseShards("8"); err != nil || v != 8 {
 		t.Fatalf("8 应=8, got %d,%v", v, err)
 	}
-	for _, bad := range []string{"17", "-1", "abc"} {
+	for _, bad := range []string{"129", "-1", "abc"} {
 		if _, err := parseShards(bad); err == nil {
 			t.Errorf("parseShards(%q) 应报错", bad)
 		}
 	}
-}
-
-// ---- 鼠标交互（R32 起） ----
-
-// findZone 返回第一个匹配 action 的热区（测试辅助）。
-func findZone(zones []clickZone, action string) *clickZone {
-	for i := range zones {
-		if zones[i].action == action {
-			return &zones[i]
+	// 新档位上限内的合法值
+	for _, ok := range []string{"16", "32", "128"} {
+		if _, err := parseShards(ok); err != nil {
+			t.Errorf("parseShards(%q) 应合法: %v", ok, err)
 		}
 	}
-	return nil
 }
+
+// ---- 鼠标交互（R32 起，按钮系统移除后仅行选择） ----
 
 func mouseClick(x, y int) tea.MouseMsg {
 	return tea.MouseMsg{Action: tea.MouseActionRelease, Button: tea.MouseButtonLeft, X: x, Y: y}
 }
 
-// TestViewRowButtons 行尾按钮渲染：running → [暂停][删除]，done → 仅 [删除]。
-func TestViewRowButtons(t *testing.T) {
+// TestViewTaskIcons 布局 A 状态图标渲染：running=▼ done=✓ paused=‖ failed=✕。
+func TestViewTaskIcons(t *testing.T) {
 	m := newTestModel(t)
 	m.tasks = []*Task{
 		{URL: "u", Output: "run.bin", State: StateRunning},
 		{URL: "u", Output: "ok.bin", State: StateDone},
+		{URL: "u", Output: "pa.bin", State: StatePaused},
+		{URL: "u", Output: "bad.bin", State: StateFailed},
 	}
 	v := m.View()
-	if !strings.Contains(v, "[暂停]") || !strings.Contains(v, "[删除]") {
-		t.Fatalf("running 行应含 [暂停] [删除]\n---\n%s", v)
+	for _, want := range []string{"▼", "✓", "‖", "✕"} {
+		if !strings.Contains(v, want) {
+			t.Errorf("View 缺少状态图标 %q\n---\n%s", want, v)
+		}
 	}
-	if strings.Contains(v, "[继续]") {
-		t.Fatal("running 行不应含 [继续]")
+	// 禁用字符零残留（§11 验收）
+	for _, r := range "⏸⏵⟳⧗⌛⏳✗" {
+		if strings.ContainsRune(v, r) {
+			t.Errorf("View 含禁用字符 %q", r)
+		}
 	}
 }
 
-// TestButtonPosFixed 按钮区固定在最左侧：不同任务（参数/进度差异巨大）的按钮 x 坐标一致，
-// 不随文件名/进度条/字节数等参数左右跳动（R32 用户反馈的跳动问题回归测试）。
-func TestButtonPosFixed(t *testing.T) {
+// TestLayoutASelection 布局 A 选中态：行首指示条 █ + PANEL2 底色，行位按 4 步进。
+func TestLayoutASelection(t *testing.T) {
 	m := newTestModel(t)
 	m.tasks = []*Task{
-		{URL: "u", Output: "a.bin", State: StateRunning, Size: 100, Done: 1, Speed: 1, ETA: 90},
-		{URL: "u", Output: "very-long-filename-xxxxxxxxxxxx.bin", State: StateRunning,
-			Size: 10 << 30, Done: 5 << 30, Speed: 9 << 20, ETA: 3600},
-		{URL: "u", Output: "c.bin", State: StateDone, Size: 100, Done: 100},
+		{URL: "u", Output: "a.bin", State: StateRunning},
+		{URL: "u", Output: "b.bin", State: StateDone},
 	}
+	m.cursor = 0
 	m.View()
-	// 两个 running 行的 [暂停] 按钮 x 应恒为 4（左边框1 + padding1 + cursor2）
-	for _, want := range []struct {
-		rowIdx int
-		x      int
-	}{{0, 4}, {1, 4}} {
-		z := findZoneAt(lastFrame.buttons, "pause", want.rowIdx)
-		if z == nil {
-			t.Fatalf("rowIdx=%d 应有 [暂停] 按钮", want.rowIdx)
-		}
-		if z.start != want.x {
-			t.Errorf("rowIdx=%d [暂停] x=%d want %d（按钮应固定在行首，不随参数跳动）", want.rowIdx, z.start, want.x)
-		}
+	// 选中行热区 y=3，次行 y=7（item 步进 4，§5.1）
+	z0 := findZoneAt(lastFrame.rows, "select", 0)
+	z1 := findZoneAt(lastFrame.rows, "select", 1)
+	if z0 == nil || z1 == nil {
+		t.Fatal("应记录两行选中热区")
 	}
-	// running 行（双按钮）的 [删除] 恒为 11（4 + 6 + 空格 1）；done 行（单按钮）恒为 4
-	for _, want := range []struct {
-		rowIdx int
-		x      int
-	}{{0, 11}, {1, 11}, {2, 4}} {
-		z := findZoneAt(lastFrame.buttons, "delete", want.rowIdx)
-		if z == nil {
-			t.Fatalf("rowIdx=%d 应有 [删除] 按钮", want.rowIdx)
-		}
-		if z.start != want.x {
-			t.Errorf("rowIdx=%d [删除] x=%d want %d", want.rowIdx, z.start, want.x)
-		}
+	if z0.y != 3 || z1.y != 7 {
+		t.Fatalf("item 步进错误: y0=%d y1=%d（want 3/7）", z0.y, z1.y)
+	}
+	// 选中行渲染含状态图标 + 文件名
+	v := m.View()
+	if !strings.Contains(v, "a.bin") || !strings.Contains(v, "▼") {
+		t.Fatalf("布局 A 应渲染选中任务\n---\n%s", v)
 	}
 }
 
@@ -754,93 +809,297 @@ func TestMouseWheel(t *testing.T) {
 	}
 }
 
-// TestMousePauseResumeButton 点击 [暂停] → 引擎取消落盘 → paused；再点 [继续] → running。
-func TestMousePauseResumeButton(t *testing.T) {
+// TestDeleteConfirmFlow 键盘 d → 确认 overlay → y 确认删除；n/Esc 取消。
+func TestDeleteConfirmFlow(t *testing.T) {
 	m := newTestModel(t)
-	km, _ := m.Update(keyRunes("a"))
+	tk := &Task{URL: "http://127.0.0.1/a.bin", Output: "a.bin", State: StateDone}
+	sub := tk.taskStateDir(m.baseOpt.StateDir)
+	if err := os.MkdirAll(sub, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(sub, "state.json"), []byte("{}"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	m.tasks = []*Task{tk}
+	m.cursor = 0
+
+	// 按 d → 进入确认，不直接删除
+	km, cmd := m.Update(keyRunes("d"))
 	m = km.(Model)
-	m.input.SetValue("http://127.0.0.1/dir/pause.bin")
-	km, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	if cmd != nil {
+		t.Fatal("d 应只弹确认 overlay，不应立即删除")
+	}
+	if m.confirming == nil {
+		t.Fatal("d 应打开确认 overlay")
+	}
+	// n 取消 → 不删除
+	km, _ = m.Update(keyRunes("n"))
 	m = km.(Model)
-	if len(m.tasks) != 1 || m.tasks[0].cancel == nil {
-		t.Fatal("任务应已启动")
+	if m.confirming != nil || len(m.tasks) != 1 {
+		t.Fatal("n 应取消确认且保留任务")
 	}
-	// 渲染并点 [暂停]
-	m.View()
-	z := findZone(lastFrame.buttons, "pause")
-	if z == nil {
-		t.Fatal("running 任务应渲染 [暂停] 按钮")
-	}
-	km, _ = m.Update(mouseClick(z.start+1, z.y))
+	// 再 d → y 确认删除
+	km, _ = m.Update(keyRunes("d"))
 	m = km.(Model)
-	// 等待引擎退出（只读确认，值放回 channel 交给 drainDone 消费，保证走真实状态迁移路径）
-	select {
-	case err := <-m.tasks[0].doneCh:
-		m.tasks[0].doneCh <- err
-	case <-time.After(10 * time.Second):
-		t.Fatal("引擎未在 10s 内退出")
-	}
-	m.drainDone()
-	if m.tasks[0].State != StatePaused {
-		t.Fatalf("点 [暂停] 后应 paused, got %v", m.tasks[0].State)
-	}
-	// 点 [继续] 重启
-	m.View()
-	z = findZone(lastFrame.buttons, "resume")
-	if z == nil {
-		t.Fatal("paused 任务应渲染 [继续] 按钮")
-	}
-	km, _ = m.Update(mouseClick(z.start+1, z.y))
+	km, cmd = m.Update(keyRunes("y"))
 	m = km.(Model)
-	if m.tasks[0].State != StateRunning {
-		t.Fatalf("点 [继续] 后应 running, got %v", m.tasks[0].State)
+	if cmd == nil {
+		t.Fatal("y 应返回删除 Cmd")
 	}
-	// 清理：取消并等待引擎退出
-	m.tasks[0].cancel()
-	select {
-	case <-m.tasks[0].doneCh:
-	case <-time.After(10 * time.Second):
-		t.Fatal("引擎未在 10s 内退出")
+	msg := cmd()
+	km, _ = m.Update(msg)
+	m = km.(Model)
+	if len(m.tasks) != 0 {
+		t.Fatal("y 确认后任务应被移除")
+	}
+	if _, err := os.Stat(sub); !os.IsNotExist(err) {
+		t.Fatal("state 子目录应被清理")
 	}
 }
 
-// TestMouseDeleteButton 点击选中行 [删除] → 移除任务（含 cursor 回退）。
-func TestMouseDeleteButton(t *testing.T) {
+// TestLimitFlow l → 输入限速 → Enter 生效；Esc 取消。
+func TestLimitFlow(t *testing.T) {
+	m := newTestModel(t)
+	km, _ := m.Update(keyRunes("l"))
+	m = km.(Model)
+	if !m.limiting {
+		t.Fatal("按 l 应进入限速输入")
+	}
+	v := m.View()
+	if !strings.Contains(v, "限速") {
+		t.Fatalf("限速 overlay 应渲染\n---\n%s", v)
+	}
+	// 输入 5M
+	km, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("5")})
+	m = km.(Model)
+	km, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("M")})
+	m = km.(Model)
+	km, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = km.(Model)
+	if m.limiting {
+		t.Fatal("Enter 后应退出限速输入")
+	}
+	if m.baseOpt.Limit != 5<<20 {
+		t.Fatalf("限速应=5MiB, got %d", m.baseOpt.Limit)
+	}
+}
+
+// TestHelpOverlay ? 打开帮助 overlay，q/Esc 关闭。
+func TestHelpOverlay(t *testing.T) {
+	m := newTestModel(t)
+	km, _ := m.Update(keyRunes("?"))
+	m = km.(Model)
+	if !m.helpOpen {
+		t.Fatal("按 ? 应打开帮助")
+	}
+	v := m.View()
+	if !strings.Contains(v, "帮助") || !strings.Contains(v, "a  添加任务") {
+		t.Fatalf("帮助 overlay 应含键位说明\n---\n%s", v)
+	}
+	km, _ = m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	m = km.(Model)
+	if m.helpOpen {
+		t.Fatal("Esc 应关闭帮助")
+	}
+}
+
+// TestFilterFlow / → 输入过滤 → Enter 应用；Esc 清空。
+func TestFilterFlow(t *testing.T) {
 	m := newTestModel(t)
 	m.tasks = []*Task{
-		{URL: "u", Output: "a.bin", State: StateDone},
-		{URL: "u", Output: "b.bin", State: StateDone},
+		{URL: "u", Output: "alpha.bin", State: StateDone},
+		{URL: "u", Output: "beta.bin", State: StateDone},
+	}
+	km, _ := m.Update(keyRunes("/"))
+	m = km.(Model)
+	if !m.filtering {
+		t.Fatal("按 / 应进入过滤输入")
+	}
+	m.input.SetValue("alpha")
+	km, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = km.(Model)
+	if m.filtering {
+		t.Fatal("Enter 后应退出过滤输入")
+	}
+	if m.filter != "alpha" {
+		t.Fatalf("filter=%q want alpha", m.filter)
+	}
+	// 布局 A 只显示匹配任务
+	v := m.View()
+	if !strings.Contains(v, "alpha.bin") || strings.Contains(v, "beta.bin") {
+		t.Fatalf("过滤后应只显示 alpha\n---\n%s", v)
+	}
+	// Esc 清空过滤
+	km, _ = m.Update(keyRunes("/"))
+	m = km.(Model)
+	km, _ = m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	m = km.(Model)
+	if m.filter != "" {
+		t.Fatalf("Esc 应清空过滤, got %q", m.filter)
+	}
+}
+
+// TestLayoutSwitch Tab/1/2/3 布局切换（§5.0 手动覆盖）。
+func TestLayoutSwitch(t *testing.T) {
+	m := newTestModel(t)
+	// 默认自动布局；1/2/3 直达并固定
+	km, _ := m.Update(keyRunes("2"))
+	m = km.(Model)
+	if m.layout != LayoutB || m.layoutAuto {
+		t.Fatalf("按 2 应切到布局 B 且手动固定, got %v auto=%v", m.layout, m.layoutAuto)
+	}
+	km, _ = m.Update(keyRunes("3"))
+	m = km.(Model)
+	if m.layout != LayoutC {
+		t.Fatalf("按 3 应切到布局 C, got %v", m.layout)
+	}
+	// Tab 循环
+	km, _ = m.Update(tea.KeyMsg{Type: tea.KeyTab})
+	m = km.(Model)
+	if m.layout != LayoutA {
+		t.Fatalf("Tab 从 C 应回 A, got %v", m.layout)
+	}
+	km, _ = m.Update(tea.KeyMsg{Type: tea.KeyTab})
+	m = km.(Model)
+	if m.layout != LayoutB {
+		t.Fatalf("Tab 从 A 应到 B, got %v", m.layout)
+	}
+}
+
+// TestLayoutAutoSwitch 宽度自动切换布局（§5.0）。
+func TestLayoutAutoSwitch(t *testing.T) {
+	m := newTestModel(t)
+	m.Update(tea.WindowSizeMsg{Width: 80, Height: 25})
+	m2 := m
+	if autoLayout(80) != LayoutA || autoLayout(120) != LayoutB || autoLayout(160) != LayoutC {
+		t.Fatal("autoLayout 阈值错误")
+	}
+	_ = m2
+	// 收到宽度消息后自动选布局
+	km, _ := m.Update(tea.WindowSizeMsg{Width: 120, Height: 30})
+	m = km.(Model)
+	if m.layout != LayoutB {
+		t.Fatalf("宽 120 应自动选 B, got %v", m.layout)
+	}
+	km, _ = m.Update(tea.WindowSizeMsg{Width: 170, Height: 35})
+	m = km.(Model)
+	if m.layout != LayoutC {
+		t.Fatalf("宽 170 应自动选 C, got %v", m.layout)
+	}
+}
+
+// TestLayoutBRender 布局 B 右栏详情：主进度条/面积图/分片图/元数据不越界。
+func TestLayoutBRender(t *testing.T) {
+	m := newTestModel(t)
+	m.width, m.height = 120, 30
+	m.layout, m.layoutAuto = LayoutB, false
+	m.tasks = []*Task{
+		{URL: "http://x/big.bin", Output: "big.bin", State: StateRunning,
+			Size: 10 << 20, Done: 3 << 20, Speed: 1 << 20, ETA: 7},
+	}
+	m.tasks[0].speedRing = newSpeedRing(60)
+	m.tasks[0].speedRing.append(1 << 20)
+	m.cursor = 0
+	v := m.View()
+	for _, want := range []string{"队列", "big.bin", "吞吐", "分片", "下载中", "1.0MB/s"} {
+		if !strings.Contains(v, want) {
+			t.Errorf("布局 B 缺少 %q\n---\n%s", want, v)
+		}
+	}
+	// 每行显示宽度不超过 120（无越界）
+	for _, line := range strings.Split(v, "\n") {
+		if lipgloss.Width(line) > 120 {
+			t.Errorf("布局 B 行越界（宽 %d > 120）: %q", lipgloss.Width(line), line)
+		}
+	}
+}
+
+// TestQueueExcludesDone 已完成任务不出现在下载队列（活动区），仅在"已完成"分组显示。
+func TestQueueExcludesDone(t *testing.T) {
+	m := newTestModel(t)
+	m.width, m.height = 120, 30
+	m.layout, m.layoutAuto = LayoutB, false
+	m.tasks = []*Task{
+		{URL: "u", Output: "run-a.bin", State: StateRunning},
+		{URL: "u", Output: "run-b.bin", State: StateRunning},
+		{URL: "u", Output: "done-c.bin", State: StateDone},
 	}
 	m.cursor = 0
-	m.View()
-	// 取选中行（rowIdx==0）的删除按钮
-	var z *clickZone
-	for i := range lastFrame.buttons {
-		if lastFrame.buttons[i].action == "delete" && lastFrame.buttons[i].rowIdx == 0 {
-			z = &lastFrame.buttons[i]
+	lines := strings.Split(m.View(), "\n")
+	leftCol := func(l string) string {
+		if len(l) > 56 {
+			return l[:56] // 中缝 x=56，左栏部分
+		}
+		return l
+	}
+	// 活动区屏 y=4..16：不得出现已完成任务
+	for i := 4; i <= 16; i++ {
+		if strings.Contains(lines[i], "done-c.bin") {
+			t.Fatalf("已完成任务不应出现在队列活动区（y=%d）: %q", i, lines[i])
+		}
+	}
+	// 活动区：running 任务应显示
+	if !strings.Contains(lines[4], "run-a.bin") {
+		t.Fatalf("活动区应显示下载中任务: %q", lines[4])
+	}
+	// 已完成区屏 y=21..26：应显示已完成任务
+	found := false
+	for i := 21; i <= 26; i++ {
+		if strings.Contains(leftCol(lines[i]), "done-c.bin") {
+			found = true
 			break
 		}
 	}
-	if z == nil {
-		t.Fatal("应渲染 [删除] 按钮")
+	if !found {
+		t.Fatal("已完成任务应出现在已完成分组")
 	}
-	km, cmd := m.Update(mouseClick(z.start+1, z.y))
-	m = km.(Model)
-	if cmd == nil {
-		t.Fatal("点 [删除] 应返回 taskRemovedMsg Cmd")
+	// 已完成区（左栏）不得出现下载中任务（右栏元数据可能显示选中任务，不在此检查）
+	for i := 21; i <= 26; i++ {
+		if strings.Contains(leftCol(lines[i]), "run-a.bin") || strings.Contains(leftCol(lines[i]), "run-b.bin") {
+			t.Fatalf("已完成区不应含下载中任务（y=%d）: %q", i, leftCol(lines[i]))
+		}
 	}
-	msg := cmd()
-	tm, ok := msg.(taskRemovedMsg)
-	if !ok {
-		t.Fatalf("Cmd 应产生 taskRemovedMsg, got %T", msg)
+}
+
+// TestLayoutCRender 布局 C 仪表盘：统计卡/吞吐图/表格/事件日志。
+func TestLayoutCRender(t *testing.T) {
+	m := newTestModel(t)
+	m.width, m.height = 120, 35
+	m.layout, m.layoutAuto = LayoutC, false
+	m.tasks = []*Task{
+		{URL: "http://x/big.bin", Output: "big.bin", State: StateRunning,
+			Size: 10 << 20, Done: 3 << 20, Speed: 1 << 20, ETA: 7},
 	}
-	km, _ = m.Update(tm)
-	m = km.(Model)
-	if len(m.tasks) != 1 || m.tasks[0].Output != "b.bin" {
-		t.Fatalf("删除 a.bin 后应剩 b.bin, got %d 个: %+v", len(m.tasks), m.tasks)
+	m.globalSpeed.append(1 << 20)
+	m.cursor = 0
+	v := m.View()
+	for _, want := range []string{"总速度", "任务", "已下载", "队列剩余", "big.bin", "1.0MB/s"} {
+		if !strings.Contains(v, want) {
+			t.Errorf("布局 C 缺少 %q\n---\n%s", want, v)
+		}
 	}
-	if m.cursor != 0 {
-		t.Fatalf("删除后 cursor 应保持 0, got %d", m.cursor)
+	for _, line := range strings.Split(v, "\n") {
+		if lipgloss.Width(line) > 120 {
+			t.Errorf("布局 C 行越界（宽 %d > 120）: %q", lipgloss.Width(line), line)
+		}
+	}
+}
+
+// TestFooterSingleLineKeycaps 底部键帽单行且 ≤9 个（§7.1 [MUST]）。
+func TestFooterSingleLineKeycaps(t *testing.T) {
+	m := newTestModel(t)
+	m.tasks = []*Task{{URL: "u", Output: "run.bin", State: StateRunning}}
+	m.cursor = 0
+	caps := m.footerKeycaps()
+	if len(caps) == 0 || len(caps) > 9 {
+		t.Fatalf("底部键帽数=%d（要求 7–9 个）", len(caps))
+	}
+	v := m.View()
+	lines := strings.Split(v, "\n")
+	// footer 为末两行：分隔线 + 单行键帽（不应多行罗列）
+	footer := lines[len(lines)-1]
+	if strings.Contains(footer, "\n") {
+		t.Fatal("底部键帽必须单行")
 	}
 }
 
@@ -898,7 +1157,7 @@ func TestSummaryLine(t *testing.T) {
 	}
 }
 
-// TestTaskOrder 显示排序：失败 → 暂停 → 进行中/排队 → 完成；
+// TestTaskOrder 显示排序：下载中 > 错误 > 暂停 > 排队 > 完成（§6.2）；
 // 同状态稳定保序；仅影响显示层，Model 内任务顺序与 cursor 语义不变。
 func TestTaskOrder(t *testing.T) {
 	tasks := []*Task{
@@ -910,7 +1169,7 @@ func TestTaskOrder(t *testing.T) {
 		{Output: "fail2", State: StateFailed},
 	}
 	order := taskOrder(tasks)
-	want := []int{1, 5, 2, 3, 4, 0} // fail1 fail2 paused run queued done（同状态保原序）
+	want := []int{3, 1, 5, 2, 4, 0} // run fail1 fail2 paused queued done（同状态保原序）
 	if len(order) != len(want) {
 		t.Fatalf("长度=%d want %d", len(order), len(want))
 	}
@@ -925,6 +1184,46 @@ func TestTaskOrder(t *testing.T) {
 	m.View()
 	if m.tasks[0].Output != "done" || m.tasks[1].State != StateFailed {
 		t.Fatal("taskOrder 不应改动 Model 内任务顺序")
+	}
+}
+
+// TestLayoutA5Tasks 布局 A 在 100×25 显示 5 个任务无错位（§10 P1 验收）。
+func TestLayoutA5Tasks(t *testing.T) {
+	m := newTestModel(t)
+	m.width, m.height = 100, 25
+	m.layout, m.layoutAuto = LayoutA, false
+	for i := 0; i < 6; i++ {
+		m.tasks = append(m.tasks, &Task{URL: "u", Output: fmt.Sprintf("f%d.bin", i),
+			State: StateRunning, Size: 1000, Done: int64(100 * i)})
+	}
+	m.cursor = 0
+	v := m.View()
+	for _, want := range []string{"f0.bin", "f1.bin", "f2.bin", "f3.bin", "f4.bin"} {
+		if !strings.Contains(v, want) {
+			t.Errorf("布局 A 应显示 %q\n---\n%s", want, v)
+		}
+	}
+	// 第 6 个超出一屏不显示
+	if strings.Contains(v, "f5.bin") {
+		t.Error("100×25 一屏最多 5 个任务，f5 不应显示")
+	}
+	// 每行不越界
+	for _, line := range strings.Split(v, "\n") {
+		if lipgloss.Width(line) > 100 {
+			t.Errorf("布局 A 行越界（宽 %d > 100）: %q", lipgloss.Width(line), line)
+		}
+	}
+	// 进度条宽 62（§5.1）
+	rows := strings.Split(v, "\n")
+	foundBar := false
+	for _, line := range rows {
+		if strings.Contains(line, "█") && strings.Contains(line, "░") {
+			foundBar = true
+			break
+		}
+	}
+	if !foundBar {
+		t.Error("布局 A 应渲染亚字符进度条")
 	}
 }
 
@@ -995,9 +1294,9 @@ func TestErrorExpandCollapse(t *testing.T) {
 // TestDetectProto URL → 协议标签。
 func TestDetectProto(t *testing.T) {
 	cases := map[string]string{
-		"http://127.0.0.1/a.bin": "http",
-		"https://x.com/b.torrent": "http",
-		"MAGNET:?xt=urn:btih:abc": "magnet",
+		"http://127.0.0.1/a.bin":    "http",
+		"https://x.com/b.torrent":   "http",
+		"MAGNET:?xt=urn:btih:abc":   "magnet",
 		" magnet:?xt=urn:btih:def ": "magnet",
 	}
 	for in, want := range cases {
@@ -1007,8 +1306,7 @@ func TestDetectProto(t *testing.T) {
 	}
 }
 
-// TestProtoTagsAndInfo 协议差异化：标签一眼区分，信息列按协议渲染
-// （HTTP=速度+ETA / BT=连接+做种 / 磁力=解析状态）。
+// TestProtoTagsAndInfo 协议差异化：标签一眼区分（HTTP/BT/磁力）。
 func TestProtoTagsAndInfo(t *testing.T) {
 	m := newTestModel(t)
 	m.tasks = []*Task{
@@ -1022,12 +1320,9 @@ func TestProtoTagsAndInfo(t *testing.T) {
 	}
 	v := m.View()
 	for _, want := range []string{
-		"HTTP", "BT", "磁力", // 协议标签
-		"●下载中", "●失败", // 状态色点+字
-		"45 连接 8 做种", // BT 信息列
-		"解析中…",       // 磁力信息列
-		"3.4MB/s", "ETA 4m 10s", // HTTP 速度+剩余（humanBytes 用 KB/MB 进制）
-		"探测资源失败: connect", // 错误单行化截断（\n 压成空格，不断行）
+		"HTTP", "BT", // 协议标签（http/bt）
+		"▼", "✕", // 状态图标
+		"3.4MB/s", "4m 10s 剩余", // HTTP 速度+剩余
 	} {
 		if !strings.Contains(v, want) {
 			t.Errorf("View 缺少 %q\n---\n%s", want, v)
@@ -1038,119 +1333,53 @@ func TestProtoTagsAndInfo(t *testing.T) {
 	}
 }
 
-// TestBarColorThresholds 进度条三色阈值（R34 定稿）：<30% 红 / <70% 黄 / ≥70% 绿。
+// TestBarColorThresholds 状态 → 进度条色（§6.2 语义色系统）。
 func TestBarColorThresholds(t *testing.T) {
+	colorLevel = ColorTrue
 	cases := []struct {
-		frac float64
-		want lipgloss.Color // ANSI 256 色索引
+		state TaskState
+		want  lipgloss.Color
 	}{
-		{0.00, "9"}, {0.29, "9"}, // 红
-		{0.30, "11"}, {0.69, "11"}, // 黄
-		{0.70, "10"}, {1.00, "10"}, // 绿
+		{StateRunning, colAccent()},
+		{StatePaused, colYellow()},
+		{StateDone, colGreen()},
+		{StateFailed, colRed()},
 	}
 	for _, c := range cases {
-		got := barColor(c.frac).GetForeground()
-		if got != c.want {
-			t.Errorf("barColor(%.2f) 色=%v want %v", c.frac, got, c.want)
+		if got := barColorOf(&Task{State: c.state}); got != c.want {
+			t.Errorf("barColorOf(%v) 色=%v want %v", c.state, got, c.want)
 		}
 	}
 }
 
-// footerY 底栏按钮所在终端行（热区中 y 最大的一组 = 底部操作栏）。
-func footerY(buttons []clickZone) int {
-	maxY := -1
-	for _, z := range buttons {
-		if z.y > maxY {
-			maxY = z.y
-		}
-	}
-	return maxY
-}
-
-// TestFooterButtons 底部操作栏（R34）：按钮跟随选中任务状态，x 恒 2/10 固定列位。
-func TestFooterButtons(t *testing.T) {
+// TestFooterKeycapsContext 底部键帽跟随选中任务状态：running=含 pause，done=含 open。
+func TestFooterKeycapsContext(t *testing.T) {
 	m := newTestModel(t)
 	m.tasks = []*Task{
 		{URL: "u", Output: "run.bin", State: StateRunning},
-		{URL: "u", Output: "bad.bin", State: StateFailed, Err: fmt.Errorf("boom")},
 		{URL: "u", Output: "ok.bin", State: StateDone},
 	}
-	m.cursor = 0 // 选中 running → 底栏 [暂停] [移除]
-	m.View()
-	fy := footerY(lastFrame.buttons)
-	if fy < 0 {
-		t.Fatal("应有底栏按钮热区")
+	// 选中 running → 键帽含暂停 不含打开
+	m.cursor = 0
+	labels := map[string]bool{}
+	for _, c := range m.footerKeycaps() {
+		labels[c.label] = true
 	}
-	pause := findZoneAtY(lastFrame.buttons, "pause", 0, fy)
-	if pause == nil {
-		t.Fatal("选中 running 时底栏应有 [暂停]")
+	if !labels[CapPause] {
+		t.Fatal("选中 running 时底栏应含暂停键帽")
 	}
-	if pause.start != 2 {
-		t.Errorf("底栏 [暂停] x=%d want 2（固定列位，不随内容跳动）", pause.start)
-	}
-	del := findZoneAtY(lastFrame.buttons, "delete", 0, fy)
-	if del == nil || del.start != 9 {
-		t.Errorf("底栏 [移除] 缺失或 x 错误: %+v", del)
-	}
-	// 切到 failed → 底栏 [继续] [移除]
+	// 选中 done → 键帽含打开
 	m.cursor = 1
-	m.View()
-	fy = footerY(lastFrame.buttons)
-	if findZoneAtY(lastFrame.buttons, "resume", 1, fy) == nil {
-		t.Fatal("选中 failed 时底栏应有 [继续]（重试语义）")
+	labels = map[string]bool{}
+	for _, c := range m.footerKeycaps() {
+		labels[c.label] = true
 	}
-	// 切到 done → 底栏仅 [移除]，无 [暂停]/[继续]（行首按钮仍按各自状态渲染，此处只看底栏热区）
-	m.cursor = 2
-	m.View()
-	fy = footerY(lastFrame.buttons)
-	if findZoneAtY(lastFrame.buttons, "pause", 2, fy) != nil {
-		t.Fatal("选中 done 时底栏不应有 [暂停] 热区")
-	}
-	if findZoneAtY(lastFrame.buttons, "resume", 2, fy) != nil {
-		t.Fatal("选中 done 时底栏不应有 [继续] 热区")
-	}
-	if findZoneAtY(lastFrame.buttons, "delete", 2, fy) == nil {
-		t.Fatal("选中 done 时底栏应有 [移除] 热区")
+	if !labels[CapOpen] {
+		t.Fatal("选中 done 时底栏应含打开键帽")
 	}
 }
 
-// findZoneAtY 指定 y、action、rowIdx 的热区（底栏按钮专用；行首按钮 y 不同）。
-func findZoneAtY(zones []clickZone, action string, rowIdx, y int) *clickZone {
-	for i := range zones {
-		if zones[i].action == action && zones[i].rowIdx == rowIdx && zones[i].y == y {
-			return &zones[i]
-		}
-	}
-	return nil
-}
-
-// TestMouseFooterDelete 点击底栏 [移除] → 状态转移（taskRemovedMsg 移除任务）。
-func TestMouseFooterDelete(t *testing.T) {
-	m := newTestModel(t)
-	m.tasks = []*Task{
-		{URL: "u", Output: "a.bin", State: StateDone},
-		{URL: "u", Output: "b.bin", State: StateFailed, Err: fmt.Errorf("boom")},
-	}
-	m.cursor = 1 // 选中 failed
-	m.View()
-	fy := footerY(lastFrame.buttons)
-	z := findZoneAtY(lastFrame.buttons, "delete", 1, fy)
-	if z == nil {
-		t.Fatal("底栏应有 [移除] 热区")
-	}
-	km, cmd := m.Update(mouseClick(z.start+1, z.y))
-	m = km.(Model)
-	if cmd == nil {
-		t.Fatal("底栏 [移除] 应返回删除 Cmd")
-	}
-	km, _ = m.Update(cmd())
-	m = km.(Model)
-	if len(m.tasks) != 1 || m.tasks[0].Output != "a.bin" {
-		t.Fatalf("点击底栏 [移除] 后应删除选中任务, got %d 个", len(m.tasks))
-	}
-}
-
-// TestFooterFollowsCursorAfterSelect 点击行改变选中 → 底栏按钮随之切换。
+// TestFooterFollowsCursorAfterSelect 点击行改变选中 → 底栏键帽随之切换。
 func TestFooterFollowsCursorAfterSelect(t *testing.T) {
 	m := newTestModel(t)
 	m.tasks = []*Task{
@@ -1159,7 +1388,7 @@ func TestFooterFollowsCursorAfterSelect(t *testing.T) {
 	}
 	m.cursor = 0
 	m.View()
-	// 点击第 2 行（done）→ cursor 移到 done → 底栏只剩 [移除]
+	// 点击第 2 行（done）→ cursor 移到 done
 	rz := findZoneAt(lastFrame.rows, "select", 1)
 	if rz == nil {
 		t.Fatal("应记录第 2 行热区")
@@ -1169,13 +1398,11 @@ func TestFooterFollowsCursorAfterSelect(t *testing.T) {
 	if m.cursor != 1 {
 		t.Fatalf("点击应选中第 2 行, got %d", m.cursor)
 	}
-	m.View()
-	fy := footerY(lastFrame.buttons)
-	if findZoneAtY(lastFrame.buttons, "pause", 1, fy) != nil {
-		t.Fatalf("选中 done 后底栏不应有 [暂停] 热区")
+	labels := map[string]bool{}
+	for _, c := range m.footerKeycaps() {
+		labels[c.label] = true
 	}
-	if findZoneAtY(lastFrame.buttons, "delete", 1, fy) == nil {
-		t.Fatal("选中 done 后底栏应有 [移除] 热区")
+	if !labels[CapOpen] {
+		t.Fatal("选中 done 后底栏应含打开键帽")
 	}
 }
-

@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -198,6 +199,135 @@ func TestMCP_RejectsBadInput(t *testing.T) {
 	}
 	if !res.IsError {
 		t.Fatal("gopher URL 应返回 isError 结果")
+	}
+}
+
+// TestMCP_RejectsRemoteSync AI-first：download_start 对公网目标同步 H-3 拒绝
+// （不等轮询），错误文案含 H-3 供 AI 识别。
+func TestMCP_RejectsRemoteSync(t *testing.T) {
+	cfg := mcpserver.Config{StateRoot: filepath.Join(t.TempDir(), "state")}
+	cs := newSession(t, cfg)
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	res, err := cs.CallTool(ctx, &mcp.CallToolParams{
+		Name:      "download_start",
+		Arguments: map[string]any{"url": "http://example.com/a.bin"},
+	})
+	if err != nil {
+		t.Fatalf("调用本身不应失败: %v", err)
+	}
+	if !res.IsError {
+		t.Fatal("公网目标应同步返回 isError（H-3），而非 running 等轮询")
+	}
+	if !strings.Contains(res.Content[0].(*mcp.TextContent).Text, "H-3") {
+		t.Fatalf("错误应含 H-3 标识: %v", res.Content[0])
+	}
+	// 不产生任务（seq 不应推进到 t1）
+	st := callTool(t, cs, "list_tasks", map[string]any{})
+	if tasks, _ := st["tasks"].([]any); len(tasks) != 0 {
+		t.Fatalf("被拒目标不应创建任务: %v", st)
+	}
+}
+
+// TestMCP_AutoMkdirOutput AI-first：output_dir 不存在时服务端自动创建并完成下载。
+func TestMCP_AutoMkdirOutput(t *testing.T) {
+	s := NewForTest(t)
+	cfg := mcpserver.Config{StateRoot: filepath.Join(t.TempDir(), "state"), Verify: "sha256"}
+	cs := newSession(t, cfg)
+	// 不存在的深层输出目录
+	outDir := filepath.Join(t.TempDir(), "a", "b", "c")
+	start := callTool(t, cs, "download_start", map[string]any{
+		"url": s.FileURL("f.bin"), "output_dir": outDir,
+	})
+	if id, _ := start["task_id"].(string); id == "" {
+		t.Fatalf("start 应返回 task_id: %v", start)
+	}
+	deadline := time.Now().Add(60 * time.Second)
+	output, _ := start["output"].(string)
+	for {
+		st, _ := statusState(callTool(t, cs, "download_status", map[string]any{}), output)
+		if st == "done" {
+			break
+		}
+		if st == "failed" {
+			st2, info := statusState(callTool(t, cs, "download_status", map[string]any{}), output)
+			_ = st2
+			t.Fatalf("任务失败: %v", info)
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("60s 未完成")
+		}
+		time.Sleep(300 * time.Millisecond)
+	}
+	if _, err := os.Stat(output); err != nil {
+		t.Fatalf("自动创建的目录下应有产物: %v", err)
+	}
+}
+
+// TestMCP_ProbeContentDisposition download_probe 应返回服务端 Content-Disposition
+// 建议文件名（AI 先探测再决定落地名）。覆盖 filename 与 RFC 5987 filename* 两形态。
+func TestMCP_ProbeContentDisposition(t *testing.T) {
+	cfg := mcpserver.Config{StateRoot: filepath.Join(t.TempDir(), "state")}
+	cs := newSession(t, cfg)
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Disposition", `attachment; filename="idea-2024.pdf"`)
+		w.Header().Set("Content-Length", "1024")
+		w.WriteHeader(200)
+		_, _ = w.Write(make([]byte, 1024))
+	}))
+	defer srv.Close()
+	out := callTool(t, cs, "download_probe", map[string]any{"url": srv.URL + "/f"})
+	if got, _ := out["name"].(string); got != "idea-2024.pdf" {
+		t.Fatalf("name=%q want idea-2024.pdf (out=%v)", got, out)
+	}
+	if sz, _ := out["size_bytes"].(float64); sz != 1024 {
+		t.Fatalf("size=%v want 1024", sz)
+	}
+
+	// RFC 5987：filename*=UTF-8''<percent-encoded>（中文文件名）
+	srv2 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Disposition", `attachment; filename*=UTF-8''%E6%96%87%E4%BB%B6.bin`)
+		w.Header().Set("Content-Length", "512")
+		w.WriteHeader(200)
+		_, _ = w.Write(make([]byte, 512))
+	}))
+	defer srv2.Close()
+	out2 := callTool(t, cs, "download_probe", map[string]any{"url": srv2.URL + "/f"})
+	if got, _ := out2["name"].(string); got != "文件.bin" {
+		t.Fatalf("name=%q want 文件.bin (out=%v)", got, out2)
+	}
+
+	// 无 Content-Disposition 头 → name 为空（非错误）
+	srv3 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Length", "256")
+		w.WriteHeader(200)
+		_, _ = w.Write(make([]byte, 256))
+	}))
+	defer srv3.Close()
+	out3 := callTool(t, cs, "download_probe", map[string]any{"url": srv3.URL + "/f"})
+	if got, _ := out3["name"].(string); got != "" {
+		t.Fatalf("无 CD 头时 name 应为空, got %q", got)
+	}
+
+	// 重定向：原始 URL 302（无 CD），最终资源带 Content-Disposition → 建议名应来自最终资源
+	dl := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Disposition", `attachment; filename="final-report.pdf"`)
+		w.Header().Set("Content-Length", "128")
+		w.WriteHeader(200)
+		_, _ = w.Write(make([]byte, 128))
+	}))
+	defer dl.Close()
+	redir := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, dl.URL, http.StatusFound)
+	}))
+	defer redir.Close()
+	out4 := callTool(t, cs, "download_probe", map[string]any{"url": redir.URL + "/go"})
+	if got, _ := out4["final_url"].(string); got == "" {
+		t.Fatalf("应有 final_url: %v", out4)
+	}
+	if got, _ := out4["name"].(string); got != "final-report.pdf" {
+		t.Fatalf("重定向资源的建议名应来自最终资源, got %q (out=%v)", got, out4)
 	}
 }
 

@@ -80,6 +80,12 @@ type Task struct {
 	lastAt   time.Time
 	cancel   context.CancelFunc // 非 nil 表示引擎在跑
 	doneCh   chan error         // 引擎完成事件（tick 轮询抽取，缓冲 1）
+
+	// 速度环形缓冲（1Hz 采样，60 笔 = 1 分钟，面积图/sparkline 数据源）。
+	speedRing *speedRing
+
+	// 分片统计缓存（refreshProgress 从 state.json 填充，分片图数据源）。
+	chunks chunkStat
 }
 
 // detectProto 从 URL 探测协议标签（显示层用）：magnet: → magnet；其余 http。
@@ -88,6 +94,12 @@ func detectProto(urlStr string) string {
 		return "magnet"
 	}
 	return "http"
+}
+
+// looksLikeURL 判断剪贴板文本是否像可下载 URL（http/https，与添加校验一致）。
+func looksLikeURL(s string) bool {
+	low := strings.ToLower(s)
+	return strings.HasPrefix(low, "http://") || strings.HasPrefix(low, "https://")
 }
 
 // start 启动引擎 goroutine：RunMulti 结束（成功/失败/取消）写入 doneCh。
@@ -121,7 +133,7 @@ type Model struct {
 	cursor   int
 	input    textinput.Model
 	adding   bool
-	proxying bool // 代理输入模式（x 进入；Enter 生效，Esc 取消）
+	proxying bool        // 代理输入模式（x 进入；Enter 生效，Esc 取消）
 	baseOpt  cli.Options // 共享旗标（StateDir 根 / Verify / Limit / Mode / Shards / Proxy）
 	outDir   string      // 新任务输出目录（空=当前目录）
 	width    int
@@ -139,6 +151,68 @@ type Model struct {
 	quitting   bool
 	// expandedErr 展开错误详情的任务索引（-1=无；点击失败行 toggle，R33）。
 	expandedErr int
+
+	// ---- 布局系统（方案 §5） ----
+	layout     LayoutID // 当前布局 A/B/C
+	layoutAuto bool     // true=按宽度自动；false=Tab/123 手动固定
+	lastW      int      // 上次应用宽度的基准（换边重算自动布局）
+
+	// ---- 可视化数据 ----
+	globalSpeed *speedRing // 全局速度（120 笔 = 2 分钟，header / 方案 C）
+	events      []logEvent // 事件日志（方案 C）
+
+	// ---- 交互 ----
+	marks     map[int]bool // 多选标记（Space，§7.1 批量操作）
+	filtering bool         // / 过滤输入中
+	filter    string       // 当前过滤关键字（匹配文件名/URL）
+
+	// ---- Overlay 状态（方案 §7.2） ----
+	helpOpen   bool        // ? 帮助 overlay
+	confirming *deleteConf // d 二次确认
+	limiting   bool        // l 限速输入
+	limitInput string      // 限速输入缓冲（复用 input）
+	overlayZ   int         // 当前 overlay 层（0=无；叠加时 +1）
+}
+
+// ---- 布局（方案 §5.0） ----
+
+// LayoutID 三套布局。
+type LayoutID int
+
+const (
+	LayoutA LayoutID = iota // 紧凑单列（<100 列）
+	LayoutB                 // 主从双栏（100–140，推荐默认）
+	LayoutC                 // 仪表盘（>140）
+)
+
+// layoutName 布局名（Tab 提示用）。
+func (l LayoutID) String() string {
+	switch l {
+	case LayoutA:
+		return "A"
+	case LayoutB:
+		return "B"
+	case LayoutC:
+		return "C"
+	}
+	return "?"
+}
+
+// autoLayout 按终端宽度选布局（§5.0，阈值见 config.go）。
+func autoLayout(w int) LayoutID {
+	switch {
+	case w <= LayoutAWidthMax:
+		return LayoutA
+	case w <= LayoutBWidthMax:
+		return LayoutB
+	default:
+		return LayoutC
+	}
+}
+
+// deleteConf 删除二次确认（§7.1 d / §7.2 确认删除 overlay）。
+type deleteConf struct {
+	rowIdx int
 }
 
 // ---- 设置面板档位（常用场景优先，末尾"自定义…"进输入） ----
@@ -149,10 +223,11 @@ var speedPresets = []int64{0, 1 << 20, 5 << 20, 10 << 20}
 // speedLabels 与 speedPresets 平行，末尾恒为自定义入口。
 var speedLabels = []string{"不限", "1MiB/s", "5MiB/s", "10MiB/s", "自定义…"}
 
-// shardPresets 分片档位（0=自动）。
-var shardPresets = []int{0, 1, 4, 8, 16}
+// shardPresets 分片档位（0=自动）。档位对齐 scheduler MaxExplicitConnections=128：
+// 16/32/64 覆盖常规收益区，128 为极端档（弱网单流受限场景；对服务器高并发不友好）。
+var shardPresets = []int{0, 1, 4, 8, 16, 32, 64, 128}
 
-var shardLabels = []string{"自动", "1", "4", "8", "16", "自定义…"}
+var shardLabels = []string{"自动", "1", "4", "8", "16", "32", "64", "128", "自定义…"}
 
 // verifyPresets 校验算法档位（""=不校验）。
 var verifyPresets = []string{"sha256", "sha1", "md5", ""}
@@ -179,6 +254,9 @@ func New(baseOpt cli.Options) Model {
 		baseOpt:     baseOpt,
 		status:      "",
 		expandedErr: -1,
+		layoutAuto:  true, // 默认按宽度自动切换
+		globalSpeed: newSpeedRing(120),
+		marks:       map[int]bool{},
 	}
 }
 
@@ -194,7 +272,7 @@ func (m *Model) AddTask(raw string) error {
 	if !strings.HasPrefix(raw, "http://") && !strings.HasPrefix(raw, "https://") {
 		return fmt.Errorf("仅支持 http/https URL: %s", raw)
 	}
-	t := &Task{URL: raw, Output: deriveOutputName(raw, m.tasks), State: StateQueued, Proto: detectProto(raw)}
+	t := &Task{URL: raw, Output: deriveOutputName(raw, m.tasks), State: StateQueued, Proto: detectProto(raw), speedRing: newSpeedRing(60)}
 	if m.outDir != "" {
 		t.Output = filepath.Join(m.outDir, t.Output)
 	}
@@ -224,12 +302,15 @@ func (m *Model) drainDone() {
 			case err == nil:
 				t.State = StateDone
 				t.Err = nil
+				m.addEvent("✓", baseName(t.Output), StCompleted+" · "+humanBytes(t.Size), colGreen())
 			case isCanceled(err):
 				t.State = StatePaused // 引擎取消 → 进度已落盘，可续传
 				t.Err = nil
+				m.addEvent("‖", baseName(t.Output), StPaused, colYellow())
 			default:
 				t.State = StateFailed
 				t.Err = err
+				m.addEvent("✕", baseName(t.Output), cleanErr(err), colRed())
 				// H-3 安全边界拒绝（公网 URL 默认不放行）：给出可行动指引，
 				// 否则用户只见「失败」与截断的行尾错误，无从下手。
 				if m.baseOpt.Proxy == "" && isLoopbackRefusal(err) {
@@ -269,6 +350,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
+		// 布局自适应：按宽度自动切换（§5.0），手动固定（Tab/123）时不受影响
+		if m.layoutAuto && msg.Width > 0 && (msg.Width != m.lastW || m.lastW == 0) {
+			m.layout = autoLayout(msg.Width)
+			m.lastW = msg.Width
+		}
 		return m, nil
 
 	case tickMsg:
@@ -310,7 +396,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 //
 // 热区 lastFrame 由 View 每帧重建（Bubble Tea 单线程事件循环串行访问，无锁安全）。
 func (m Model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
-	if m.adding || m.proxying || m.settingCustom || m.settings {
+	if m.adding || m.proxying || m.settingCustom || m.settings ||
+		m.helpOpen || m.confirming != nil || m.limiting || m.filtering {
 		return m, nil
 	}
 	if tea.MouseEvent(msg).IsWheel() {
@@ -330,16 +417,13 @@ func (m Model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 	if msg.Action != tea.MouseActionRelease || msg.Button != tea.MouseButtonLeft {
 		return m, nil
 	}
-	if z := hitZone(lastFrame.buttons, msg.X, msg.Y); z != nil {
-		return m.activateZone(*z)
-	}
 	if z := hitZone(lastFrame.rows, msg.X, msg.Y); z != nil {
 		return m.activateZone(*z)
 	}
 	return m, nil
 }
 
-// activateZone 按热区动作分发（与键盘 p/d 共用同一套任务操作，行为一致）。
+// activateZone 按热区动作分发（选中行；双击语义保留给 future，当前单击即选中）。
 func (m Model) activateZone(z clickZone) (tea.Model, tea.Cmd) {
 	switch z.action {
 	case "select":
@@ -355,12 +439,6 @@ func (m Model) activateZone(z clickZone) (tea.Model, tea.Cmd) {
 			}
 		}
 		return m, nil
-	case "pause":
-		return m.pauseTask(z.rowIdx)
-	case "resume":
-		return m.resumeTask(z.rowIdx)
-	case "delete":
-		return m.deleteTask(z.rowIdx)
 	}
 	return m, nil
 }
@@ -438,7 +516,7 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				m.errMsg = "仅支持 http/https URL"
 				return m, nil
 			}
-			t := &Task{URL: raw, Output: deriveOutputName(raw, m.tasks), State: StateQueued, Proto: detectProto(raw)}
+			t := &Task{URL: raw, Output: deriveOutputName(raw, m.tasks), State: StateQueued, Proto: detectProto(raw), speedRing: newSpeedRing(60)}
 			if m.outDir != "" {
 				t.Output = filepath.Join(m.outDir, t.Output)
 			}
@@ -472,6 +550,89 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.handleSettingKey(msg)
 	}
 
+	// ---- Overlay 层（方案 §7.2，Esc 逐层关闭） ----
+	// 确认删除
+	if m.confirming != nil {
+		switch msg.String() {
+		case "y", "Y":
+			idx := m.confirming.rowIdx
+			m.confirming = nil
+			return m.deleteTask(idx)
+		case "n", "N":
+			m.confirming = nil
+			return m, nil
+		}
+		switch msg.Type {
+		case tea.KeyEsc, tea.KeyEnter:
+			m.confirming = nil
+			return m, nil
+		}
+		return m, nil
+	}
+	// 帮助
+	if m.helpOpen {
+		switch msg.Type {
+		case tea.KeyEsc, tea.KeyCtrlC:
+			m.helpOpen = false
+			return m, nil
+		}
+		switch msg.String() {
+		case "q", "?":
+			m.helpOpen = false
+			return m, nil
+		}
+		return m, nil
+	}
+	// 过滤输入
+	if m.filtering {
+		switch msg.Type {
+		case tea.KeyEnter:
+			m.filter = strings.TrimSpace(m.input.Value())
+			m.filtering = false
+			m.input.Blur()
+			m.input.SetValue("")
+			return m, nil
+		case tea.KeyEsc:
+			m.filtering = false
+			m.filter = "" // Esc 清除过滤（§7.1 / 过滤）
+			m.input.Blur()
+			m.input.SetValue("")
+			return m, nil
+		}
+		var cmd tea.Cmd
+		m.input, cmd = m.input.Update(msg)
+		return m, cmd
+	}
+	// 限速输入
+	if m.limiting {
+		switch msg.Type {
+		case tea.KeyEnter:
+			v, err := parseSpeed(m.limitInput)
+			if err != nil {
+				m.errMsg = err.Error()
+			} else {
+				m.baseOpt.Limit = v
+				m.status = "限速已设为 " + speedLabel(v)
+			}
+			m.limiting = false
+			m.limitInput = ""
+			return m, nil
+		case tea.KeyEsc:
+			m.limiting = false
+			m.limitInput = ""
+			return m, nil
+		case tea.KeyRunes:
+			m.limitInput += string(msg.Runes)
+			return m, nil
+		case tea.KeyBackspace:
+			if len(m.limitInput) > 0 {
+				m.limitInput = m.limitInput[:len(m.limitInput)-1]
+			}
+			return m, nil
+		}
+		return m, nil
+	}
+
 	switch msg.Type {
 	case tea.KeyCtrlC:
 		m.quitting = true
@@ -488,6 +649,35 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.cursor++
 		}
 		return m, nil
+	case tea.KeyPgUp:
+		m.cursor -= 5
+		if m.cursor < 0 {
+			m.cursor = 0
+		}
+		return m, nil
+	case tea.KeyPgDown:
+		m.cursor += 5
+		if m.cursor > len(m.tasks)-1 {
+			m.cursor = len(m.tasks) - 1
+		}
+		return m, nil
+	case tea.KeyHome:
+		m.cursor = 0
+		return m, nil
+	case tea.KeyEnd:
+		m.cursor = len(m.tasks) - 1
+		return m, nil
+	case tea.KeyTab:
+		m.layoutAuto = false // 手动覆盖，不再随宽度自动
+		m.layout = nextLayout(m.layout)
+		return m, nil
+	case tea.KeyRunes:
+		switch string(msg.Runes) {
+		case "1", "2", "3":
+			m.layoutAuto = false
+			m.layout = LayoutID(msg.Runes[0] - '1')
+			return m, nil
+		}
 	}
 
 	// 大小写兼容：Shift+a / Caps Lock 下 "A" 也匹配（Toast 键语义，大小写不敏感）。
@@ -502,6 +692,13 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.input.Focus()
 		m.input.SetValue("")
 		m.input.Placeholder = urlPlaceholder
+		// IDM 式：打开添加任务时自动读取剪贴板，若内容为 URL 直接填入（免手动粘贴）
+		if txt, ok := pasteText(); ok {
+			if t := strings.TrimSpace(txt); looksLikeURL(t) {
+				m.input.SetValue(t)
+				m.input.CursorEnd()
+			}
+		}
 		return m, textinput.Blink
 	case "x":
 		m.proxying = true
@@ -514,6 +711,20 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.settingRow = 0
 		m.errMsg = ""
 		return m, nil
+	case "?":
+		m.helpOpen = true
+		return m, nil
+	case "/":
+		m.filtering = true
+		m.input.Focus()
+		m.input.SetValue("")
+		m.input.Placeholder = "过滤文件名/URL 关键字（Enter 应用，Esc 取消）"
+		return m, textinput.Blink
+	case "l":
+		m.limiting = true
+		m.limitInput = ""
+		m.errMsg = ""
+		return m, nil
 	case "p":
 		if len(m.tasks) == 0 || m.cursor >= len(m.tasks) {
 			return m, nil
@@ -524,13 +735,53 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		case StatePaused, StateFailed, StateQueued: // 继续/重试/启动
 			return m.resumeTask(m.cursor)
 		}
-	case "d":
+	case "r": // 重试（仅 error 态）
 		if len(m.tasks) == 0 || m.cursor >= len(m.tasks) {
 			return m, nil
 		}
-		return m.deleteTask(m.cursor)
+		if m.tasks[m.cursor].State == StateFailed {
+			return m.resumeTask(m.cursor)
+		}
+	case "d": // 删除：二次确认（§7.2）
+		if len(m.tasks) == 0 || m.cursor >= len(m.tasks) {
+			return m, nil
+		}
+		m.confirming = &deleteConf{rowIdx: m.cursor}
+		return m, nil
+	case " ": // 多选标记
+		if len(m.tasks) == 0 || m.cursor >= len(m.tasks) {
+			return m, nil
+		}
+		if m.marks == nil {
+			m.marks = map[int]bool{}
+		}
+		m.marks[m.cursor] = !m.marks[m.cursor]
+		return m, nil
+	case "c": // 复制 URL
+		if len(m.tasks) == 0 || m.cursor >= len(m.tasks) {
+			return m, nil
+		}
+		t := m.tasks[m.cursor]
+		if ok := copyText(t.URL); ok {
+			m.status = "已复制 URL"
+		} else {
+			m.errMsg = "剪贴板不可写"
+		}
+		return m, nil
 	}
 	return m, nil
+}
+
+// nextLayout 布局循环 A→B→C→A。
+func nextLayout(l LayoutID) LayoutID {
+	switch l {
+	case LayoutA:
+		return LayoutB
+	case LayoutB:
+		return LayoutC
+	default:
+		return LayoutA
+	}
 }
 
 // handleSettingKey 设置面板按键：↑/↓ 选择行，Enter/空格/→ 切换档位，
@@ -615,7 +866,7 @@ func (m Model) cycleSetting() (tea.Model, tea.Cmd) {
 	case 0:
 		m.input.Placeholder = "如 5M / 1024k / 1048576（0=不限）"
 	case 1:
-		m.input.Placeholder = "1..16（0=自动）"
+		m.input.Placeholder = "1..128（0=自动；≥32 弱网多拨）"
 	case 2:
 		m.input.Placeholder = "sha256 / sha1 / md5 / none"
 	case 3:
@@ -742,15 +993,15 @@ func parseSpeed(raw string) (int64, error) {
 	return v * mult, nil
 }
 
-// parseShards 解析分片数：0=自动，1..16。
+// parseShards 解析分片数：0=自动，1..128（档位对齐 scheduler MaxExplicitConnections）。
 func parseShards(raw string) (int, error) {
 	s := strings.TrimSpace(raw)
 	if s == "" {
 		return 0, nil
 	}
 	v, err := strconv.Atoi(s)
-	if err != nil || v < 0 || v > 16 {
-		return 0, fmt.Errorf("分片数: 0..16（0=自动）")
+	if err != nil || v < 0 || v > 128 {
+		return 0, fmt.Errorf("分片数: 0..128（0=自动；≥32 为弱网多拨）")
 	}
 	return v, nil
 }
@@ -763,6 +1014,11 @@ var pasteText = func() (string, bool) {
 		return "", false
 	}
 	return txt, true
+}
+
+// copyText 写入系统剪贴板（c 复制 URL 用，可替换以便测试）。
+var copyText = func(s string) bool {
+	return clipboard.WriteAll(s) == nil
 }
 
 // finishProxy 提交代理配置（Enter）：空值清除代理；非空校验前缀并生效。
@@ -823,6 +1079,7 @@ func (m Model) verdict() string {
 // 注意：persist.Store 打开后缓存不自动刷新，轮询必须重读文件（core 现状约束）。
 func (m *Model) refreshProgress() {
 	now := time.Now()
+	var totalSpeed float64
 	for _, t := range m.tasks {
 		if t.State != StateRunning {
 			continue
@@ -833,12 +1090,19 @@ func (m *Model) refreshProgress() {
 		}
 		t.Size = st.FileSize
 		t.Done = st.Done
+		t.chunks = chunksFromShards(st.Shards)
 		if !t.lastAt.IsZero() {
 			dt := now.Sub(t.lastAt).Seconds()
 			if dt > 0 && st.Done >= t.lastDone {
 				t.Speed = float64(st.Done-t.lastDone) / dt
 			}
 		}
+		// 速度环形缓冲采样（1Hz 节流，§8.2）
+		if t.speedRing == nil {
+			t.speedRing = newSpeedRing(60)
+		}
+		t.speedRing.push(t.Speed, now)
+		totalSpeed += t.Speed
 		// R21：ETA = 剩余字节 / 当前速率（已知大小且速率>0 时）
 		t.ETA = 0
 		if st.FileSize > 0 && t.Speed > 0 && st.Done < st.FileSize {
@@ -849,6 +1113,11 @@ func (m *Model) refreshProgress() {
 		}
 		t.lastDone, t.lastAt = st.Done, now
 	}
+	// 全局速度采样（header / 方案 C 吞吐图）
+	if m.globalSpeed == nil {
+		m.globalSpeed = newSpeedRing(120)
+	}
+	m.globalSpeed.push(totalSpeed, now)
 }
 
 // readState 读取单个任务 state.json 中的指定条目。
@@ -896,6 +1165,7 @@ func (m *Model) RestoreTasks() {
 			m.tasks = append(m.tasks, &Task{
 				URL: st.URL, Output: st.ID, State: state,
 				Size: st.FileSize, Done: st.Done, Proto: detectProto(st.URL),
+				speedRing: newSpeedRing(60),
 			})
 		}
 	}
@@ -928,4 +1198,12 @@ func sanitizeName(s string) string {
 		`<`, `_`, `>`, `_`, `:`, `_`, `"`, `_`, `/`, `_`,
 		`\`, `_`, `|`, `_`, `?`, `_`, `*`, `_`,
 	).Replace(s)
+}
+
+// baseName 取路径末尾文件名（事件日志用）。
+func baseName(p string) string {
+	if i := strings.LastIndexAny(p, `/\`); i >= 0 {
+		return p[i+1:]
+	}
+	return p
 }

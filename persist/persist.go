@@ -24,7 +24,8 @@ type State struct {
 	FileSize  int64        `json:"file_size"`
 	Done      int64        `json:"done"`
 	Status    string       `json:"status"`
-	UpdatedAt int64        `json:"updated_at"`       // unix nanos
+	Hash      string       `json:"hash,omitempty"` // 完成任务的校验和（Agent 接口：tasks --output json 直接取用）
+	UpdatedAt int64        `json:"updated_at"`     // unix nanos
 	Shards    []ShardState `json:"shards,omitempty"` // 每分片进度（断点续传）
 }
 
@@ -87,6 +88,22 @@ func (s *Store) Remove(id string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	delete(s.data, id)
+	return s.flushLocked()
+}
+
+// SetHash 回填任务校验和（下载完成后追加；任务不存在则忽略）。
+// 独立于 Put 调用，避免修改 flushState 的既有调用面。
+func (s *Store) SetHash(id, sum string) error {
+	if sum == "" {
+		return nil
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	st, ok := s.data[id]
+	if !ok {
+		return nil
+	}
+	st.Hash = sum
 	return s.flushLocked()
 }
 

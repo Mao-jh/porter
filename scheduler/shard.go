@@ -39,9 +39,14 @@ const (
 	SmallFileThresh = 5 << 20 // 5 MiB 以下退化为单连接
 	MaxShardSize    = 8 << 20 // 8 MiB/片 大文件细粒度上限
 	MaxConnections  = 6       // 自动决策连接数封顶（内存红线 H-1/H-2 保守值）
-	// MaxExplicitConnections 显式 -n 指定的连接上限（第 6 轮放宽，对齐 aria2 -x=16 硬上限）。
-	// 自动决策仍封顶 MaxConnections；每连接 64KiB 缓冲，16 连接增量内存仅约 1MiB。
-	MaxExplicitConnections = 16
+	// MaxExplicitConnections 显式 -n 指定的连接上限（第 6 轮 16 → 本轮扩展档位）。
+	// 档位语义：自动决策仍封顶 MaxConnections=6；显式 -n 档位 16/32/64 覆盖常规收益区
+	// （服务器每 IP 并发限制普遍 4~16，超过收效甚微）；64 以上属极端档，128 仅在
+	// 「单连接被服务器限速、且服务器不限制并发」的特定弱网场景有收益——
+	// 128 连接的代价：慢启动拉满前的空窗放大、对服务器不友好（易触发限流/拉黑）、
+	// 进度持久化与覆盖校验的簿记量线性增长（每 500ms 序列化 128 片）。每连接 64KiB
+	// 缓冲，128 连接增量内存仅约 8MiB（H-1/H-2 红线远未被触达，非主要矛盾）。
+	MaxExplicitConnections = 128
 )
 
 // Plan 为一个文件的完整分片计划。

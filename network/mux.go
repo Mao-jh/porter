@@ -23,6 +23,23 @@ func urlScheme(raw string) string {
 	return strings.ToLower(u.Scheme)
 }
 
+// validateScheme 校验 URL 语法与 scheme 白名单，返回人类可读错误。
+// AI-first：区分「URL 语法非法」与「scheme 不支持」，避免误导性报错
+//（如 http://[::1 解析失败时 scheme 为空串，若只报 unsupported scheme 会让
+// 使用者误以为是协议问题而非 URL 本身写错）。
+func validateScheme(raw string) error {
+	u, err := url.Parse(raw)
+	if err != nil || u.Scheme == "" {
+		return fmt.Errorf("URL 语法非法: %q（无法解析）", raw)
+	}
+	switch strings.ToLower(u.Scheme) {
+	case "http", "https", "ftp", "ftps", "file":
+		return nil
+	default:
+		return fmt.Errorf("unsupported scheme: %q (支持: http/https/ftp/ftps/file)", strings.ToLower(u.Scheme))
+	}
+}
+
 // Fetcher 协议无关的下载接口（cli 引擎依赖的最小协议面）。
 type Fetcher interface {
 	// Probe 探测资源：返回 (大小, 是否支持 Range, 错误)；size=0 表示未知（流式）。
@@ -56,7 +73,7 @@ func (m *Mux) Probe(ctx context.Context, urlStr string) (int64, bool, error) {
 	case "file":
 		return m.fileT.Probe(ctx, urlStr)
 	default:
-		return 0, false, fmt.Errorf("unsupported scheme: %q (支持: http/https/ftp/ftps/file)", scheme)
+		return 0, false, validateScheme(urlStr)
 	}
 }
 
@@ -70,6 +87,6 @@ func (m *Mux) FetchRange(ctx context.Context, urlStr string, start, end int64, d
 	case "file":
 		return m.fileT.FetchRange(ctx, urlStr, start, end, dst)
 	default:
-		return fmt.Errorf("unsupported scheme: %q (支持: http/https/ftp/ftps/file)", urlScheme(urlStr))
+		return validateScheme(urlStr)
 	}
 }

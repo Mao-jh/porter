@@ -15,6 +15,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"net/url"
 	"os"
 	"path"
@@ -27,7 +28,7 @@ import (
 	"time"
 
 	"github.com/Mao-jh/porter/hash"
-	"github.com/Mao-jh/porter/io"
+	pio "github.com/Mao-jh/porter/io"
 	"github.com/Mao-jh/porter/network"
 	"github.com/Mao-jh/porter/persist"
 	"github.com/Mao-jh/porter/retry"
@@ -63,10 +64,25 @@ type Options struct {
 	MinRate     int64         // 慢速保护阈值（字节/秒；>0 时持续 30s 低于阈值 → 判坏源切换）
 	Stall       time.Duration // 响应停滞超时（>0 时 N 秒无进度推进 → 判坏源；默认 0=不启用）
 	RetryForever bool         // 无限退避重试（-retry-forever；配合镜像切换覆盖跨境/冷源场景）
+
+	// OutMode 输出模式（--output table|json|ndjson；默认 table=人类格式，历史兼容）。
+	// json/ndjson 是机器一等出口：下载完成输出封套、错误输出结构化错误封套。
+	// 注意与 Output（-o 输出路径，curl 语义）区分：--output 选的是格式不是路径。
+	// 零值 "" 等价 table（兼容直接构造 Options 的既有调用，如测试）。
+	OutMode OutputMode
 }
 
 // boolFlags 布尔标志集合：预扫描阶段不把下一个 token 消费为标志值。
 var boolFlags = map[string]bool{"summary": true}
+
+// outMode 返回规范化输出模式（OutMode 零值 "" 等价 table：
+// 兼容直接构造 Options 的调用方与 `--output` 未显式指定）。
+func (o *Options) outMode() OutputMode {
+	if o.OutMode == "" {
+		return OutputTable
+	}
+	return o.OutMode
+}
 
 // headerList 收集可重复的 -H "Key: Value" 标志。
 type headerList []string
@@ -124,9 +140,13 @@ func Parse(args []string) (*Options, error) {
 	args = append(flagArgs, posArgs...)
 
 	fs := flag.NewFlagSet("downloader", flag.ContinueOnError)
+	// AI-first：禁止 flag 包把整份 usage dump 到 stderr（Parse 失败时会让
+	// 错误信息淹没在大段帮助文本里，AI 消费方难以解析）。错误由调用方
+	// 单行输出，此处仅吞掉 flag 包的自动打印。
+	fs.SetOutput(io.Discard)
 	var (
 		output   = fs.String("o", "", "输出路径（单 URL=文件路径；多 URL=输出目录，缺省为当前目录）")
-		shards   = fs.Int("n", 0, "每任务分片数（0=自动决策，1..16）")
+		shards   = fs.Int("n", 0, "每任务分片数（0=自动决策；档位 1..128，≥32 为弱网多拨场景，需服务端接受高并发）")
 		mode     = fs.String("mode", "default", "CPU 模式: default(≤60%) | max(满载)；多任务时同时决定并发任务数")
 		verify   = fs.String("verify", "sha256", "校验算法: sha256|sha1|md5|none")
 		stateDir = fs.String("state-dir", ".downloader", "任务状态持久化目录")
@@ -141,6 +161,7 @@ func Parse(args []string) (*Options, error) {
 		minRate  = fs.Int64("min-rate", 0, "慢速保护（字节/秒）：平均速率持续 30s 低于阈值 → 判坏源并切换/重试（0=关闭）")
 		stall    = fs.Int("stall", 0, "停滞超时（秒）：N 秒无进度推进 → 判坏源并切换/重试（0=关闭）")
 		forever  = fs.Bool("retry-forever", false, "可重试错误无限退避重试（跨境/冷源场景，直到成功或 Ctrl-C）")
+		outFmt   = fs.String("output", "table", "输出模式: table(人类) | json(统一封套) | ndjson(逐行封套)")
 	)
 	fs.Var(&hdrs, "H", "透传请求头 \"Key: Value\"（可重复，如 -H \"Cookie: a=b\"）")
 	if err := fs.Parse(args); err != nil {
@@ -207,10 +228,22 @@ func Parse(args []string) (*Options, error) {
 	if algo == "none" {
 		algo = ""
 	}
+	// AI-first：非法校验算法在解析期即拒绝（此前下载完成后才报
+	// "hash: unsupported algorithm"，浪费整次下载；且不提示合法取值）。
+	switch algo {
+	case hash.MD5, hash.SHA1, hash.SHA256, "":
+	default:
+		return nil, fmt.Errorf("非法 -verify: %s（应为 sha256|sha1|md5|none）", *verify)
+	}
+	outMode, err := ParseOutputMode(*outFmt)
+	if err != nil {
+		return nil, err
+	}
 	return &Options{
 		URL:      urls[0],
 		URLs:     urls,
 		Output:   *output,
+		OutMode:  outMode,
 		Shards:   *shards,
 		Mode:     m,
 		Verify:   algo,
@@ -406,14 +439,60 @@ func RunMulti(ctx context.Context, opt *Options) error {
 	}
 	close(results)
 
+	// Agent 接口：--output json|ndjson 时把每任务结果汇总为统一封套输出。
+	// 历史语义保持：任一任务失败 → 退出码非零；封套 ok=false 但仍携带 data（显式声明部分失败）。
+	type downloadResult struct {
+		URL    string `json:"url"`
+		Output string `json:"output"`
+		Status string `json:"status"`        // done | failed | cancelled
+		Size   int64  `json:"size_bytes,omitempty"`
+		Hash   string `json:"sha256,omitempty"` // 完成后校验和（从持久化状态回填）
+		Error  string `json:"error,omitempty"`
+	}
 	var errs []error
+	items := make([]downloadResult, 0, len(opt.URLs))
+	// outs 与 URLs 平行（含 -i out=name 与多任务 -o 目录拼接），预构建 输出名→URL 反查表
+	urlByOut := make(map[string]string, len(outs))
+	for i, out := range outs {
+		if i < len(opt.URLs) {
+			urlByOut[out] = opt.URLs[i]
+		}
+	}
 	for r := range results {
+		item := downloadResult{Output: r.id, URL: urlByOut[r.id]}
 		if r.err != nil {
 			errs = append(errs, fmt.Errorf("%s: %w", r.id, r.err))
+			item.Status, item.Error = "failed", r.err.Error()
+		} else {
+			item.Status = "done"
+			if st, ok := store.Get(r.id); ok {
+				item.Size, item.Hash = st.FileSize, st.Hash
+			}
 		}
+		items = append(items, item)
 	}
 	if ctx.Err() != nil {
 		errs = append(errs, ctx.Err())
+		for i := range items {
+			if items[i].Status == "done" {
+				continue
+			}
+			items[i].Status = "cancelled"
+		}
+	}
+	if opt.outMode() != OutputTable {
+		env := &Envelope{
+			SchemaVersion: ContractVersion, Type: "download.result", OK: len(errs) == 0,
+			Data: items, Meta: EnvelopeMeta{Command: "porter download", Version: Version},
+		}
+		if len(errs) > 0 {
+			for i := range items {
+				if items[i].Status != "done" && items[i].Error != "" {
+					env.Errors = append(env.Errors, Classify(errors.New(items[i].Error), "porter"))
+				}
+			}
+		}
+		_ = Emit(os.Stdout, opt.outMode(), env)
 	}
 	return errors.Join(errs...)
 }
@@ -598,8 +677,15 @@ func runOne(ctx context.Context, fetch network.Fetcher, tr *network.Transport, o
 		return err
 	}
 
+	// AI-first：-o 指向已存在目录时提前给出明确提示。此检查必须放在
+	// OpenSparse 之前——OpenSparse 打开的是 output.part（不会失败），
+	// 失败发生在提交阶段 rename → 已存在目录（"Access is denied"），
+	// AI 无法据此理解是 -o 用法错误。单 URL 时 -o 语义为文件路径。
+	if fi, statErr := os.Stat(output); statErr == nil && fi.IsDir() {
+		return fmt.Errorf("打开输出文件失败: 输出路径是已存在的目录 %q（单 URL 时 -o 为文件路径，请改指向文件；多 URL 时 -o 为输出目录）", output)
+	}
 	// 稀疏文件：续传时保留 .part 已有内容（OpenSparse 不截断）
-	sf, err := io.OpenSparse(output, plan.FileSize)
+	sf, err := pio.OpenSparse(output, plan.FileSize)
 	if err != nil {
 		// R22：父目录缺失时给出明确提示（此前仅报 OS 层 "cannot find the path"）
 		if parent := filepath.Dir(output); parent != "." && parent != "" && parent != string(filepath.Separator) {
@@ -702,6 +788,8 @@ func runOne(ctx context.Context, fetch network.Fetcher, tr *network.Transport, o
 				expected, verifyAlgo, expected, sum)
 		}
 		fmt.Fprintf(os.Stderr, "[verify] %s(%s)=%s\n", output, verifyAlgo, sum)
+		// Agent 接口：校验和回填持久化状态（tasks --output json 直接取用，无需二次计算）
+		_ = store.SetHash(output, sum)
 	}
 	return nil
 }
@@ -824,7 +912,7 @@ type attempt struct {
 type downloader struct {
 	tr     network.Fetcher // 协议无关（Mux 分发 http(s)/ftp(s)）
 	url    string
-	sf     *io.SparseFile
+	sf     *pio.SparseFile
 	retryC *retry.Config
 
 	// 第 23 轮：抗劣化（慢速/停滞监测；>0 生效，0=关闭）
@@ -846,7 +934,7 @@ type downloader struct {
 // minStealSplit 窃取切割的最小剩余区间（1 MiB，过小不值得分裂连接）。
 const minStealSplit = 1 << 20
 
-func newDownloader(tr network.Fetcher, url string, sf *io.SparseFile, plan *scheduler.Plan) *downloader {
+func newDownloader(tr network.Fetcher, url string, sf *pio.SparseFile, plan *scheduler.Plan) *downloader {
 	d := &downloader{
 		tr:       tr,
 		url:      url,
@@ -876,9 +964,13 @@ func (d *downloader) run(ctx context.Context) error {
 	if tasks == 0 {
 		return nil
 	}
-	workers := tasks // 任务数即连接数上限（≤6，NewPlan 保证）
-	if workers > scheduler.MaxConnections {
-		workers = scheduler.MaxConnections
+	workers := tasks // 任务数即连接数上限
+	// AI-first：显式 -n 档位放开。此前 workers 被 MaxConnections=6 硬卡住：
+	// -n 16（乃至更高）只产生更多分片，真正并发仍只有 6 路——对 AI 用户宣称的
+	// 档位与实际并发不符。自动决策（NewPlan）生成的分片恒 ≤6，故此处改用显式
+	// 上限不改变默认行为；只有用户显式 -n 32/64/128 时才放开并发闸门。
+	if workers > scheduler.MaxExplicitConnections {
+		workers = scheduler.MaxExplicitConnections
 	}
 	// ctx 取消时关闭引擎，解除 pop 阻塞；正常结束后退出 watcher
 	runDone := make(chan struct{})
@@ -1183,7 +1275,7 @@ func (d *downloader) snapshotShards() []persist.ShardState {
 
 // progressWriterAt 将响应体按 base 偏移写入 SparseFile，并原子累计已写字节。
 type progressWriterAt struct {
-	sf      *io.SparseFile
+	sf      *pio.SparseFile
 	base    int64
 	written *atomic.Int64
 }

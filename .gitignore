@@ -22,6 +22,8 @@ e2e/ts*.log
 e2e/mcp_ts*.log
 test_raw.log
 tui/spike6.out
+# 误置于源码树的交叉编译产物（macOS）
+tui/porter-darwin-arm64
 
 # GUI 选型 spike 的采样原始数据保留（证据），构建产物忽略
 gui/*.exe

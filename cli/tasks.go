@@ -13,12 +13,22 @@ import (
 )
 
 // RunTasks 执行 tasks 子命令：按更新时间倒序列出所有任务状态。
-func RunTasks(stateDir string) error {
+//   - table（默认）：人类表格；
+//   - json|ndjson：统一封套（type=tasks.list），data 直接序列化 persist.State
+//     （字段即契约：id/url/file_size/done/status/hash/updated_at/shards，与 MCP list_tasks 同源）。
+func RunTasks(stateDir string, mode OutputMode) error {
 	store, err := persist.Open(stateDir)
 	if err != nil {
 		return fmt.Errorf("打开任务状态目录失败: %w", err)
 	}
-	return listTasks(os.Stdout, store.All())
+	states := store.All()
+	if mode != OutputTable {
+		sort.Slice(states, func(i, j int) bool { return states[i].UpdatedAt > states[j].UpdatedAt }) // 稳定输出
+		env := OKEnv("tasks.list", states)
+		env.Meta.Command = "porter tasks"
+		return Emit(os.Stdout, mode, env)
+	}
+	return listTasks(os.Stdout, states)
 }
 
 // listTasks 渲染任务列表（注入 Writer 便于测试）。

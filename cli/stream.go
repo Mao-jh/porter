@@ -46,5 +46,9 @@ func validateStreamOutput(opt *Options) error {
 	if opt.Shards > 0 {
 		return errors.New("-o - 流式模式不支持 -n 分片（stdout 不可寻址，强制单连接顺序输出）")
 	}
+	if opt.outMode() != OutputTable {
+		// stdout 已被文件占用：--output json/ndjson 会把封套混入数据流，禁止组合（诚实拒绝而非静默污染）
+		return errors.New("-o - 流式模式不支持 --output json/ndjson（stdout 已被文件内容占用）")
+	}
 	return nil
 }

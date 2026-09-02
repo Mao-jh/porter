@@ -7,7 +7,8 @@
 set -u
 # 端口基址可覆盖（如 PBASE=54400 ./scripts/retest_fixes.sh），避免与门禁其他段冲突
 PB="${PBASE:-54331}"
-ROOT=/c/Users/31423/Desktop/deliverable
+# 仓库根目录（脚本位于 scripts/，上一级即根目录；公开仓库无本机绝对路径）
+ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 P=$ROOT/bin/porter.exe
 TS=$ROOT/bin/testserver.exe
 cd "$ROOT"

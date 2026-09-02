@@ -56,12 +56,20 @@ func TestNewPlanN_ExplicitCount(t *testing.T) {
 	if got := len(NewPlanN(12<<20, 0).Shards); got != 3 {
 		t.Fatalf("n=0 应自动决策为 3, got %d", got)
 	}
-	// n 超上限收敛到显式上限 16（对齐 aria2 -x；自动决策仍封顶 6）
-	if got := len(NewPlanN(30<<20, 99).Shards); got != MaxExplicitConnections {
-		t.Fatalf("n=99 应收敛到 %d, got %d", MaxExplicitConnections, got)
+	// n 超上限收敛到显式上限（本轮扩展至 128；自动决策仍封顶 6）
+	if got := len(NewPlanN(3000<<20, 999).Shards); got != MaxExplicitConnections {
+		t.Fatalf("n=999 应收敛到 %d, got %d", MaxExplicitConnections, got)
 	}
 	if got := len(NewPlanN(30<<20, 16).Shards); got != 16 {
 		t.Fatalf("n=16 应得 16 片, got %d", got)
+	}
+	// 新档位 32/64/128：分片数精确生成且覆盖全文件（128 需 ≥128MiB 避免 <1MiB 碎片）
+	for _, n := range []int{32, 64, 128} {
+		p := NewPlanN(256<<20, n)
+		if got := len(p.Shards); got != n {
+			t.Fatalf("显式 n=%d 应得 %d 片, got %d", n, n, got)
+		}
+		assertContiguous(t, p.Shards, 256<<20)
 	}
 	// n 不超过字节数（避免零长分片）
 	if got := len(NewPlanN(3, 6).Shards); got != 3 {
